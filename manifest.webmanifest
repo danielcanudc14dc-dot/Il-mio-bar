@@ -1,0 +1,9 @@
+{
+  "name": "Il mio Bar",
+  "short_name": "Il mio Bar",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f2f2f2",
+  "theme_color": "#111111",
+  "lang": "it"
+}

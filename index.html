@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Il mio Bar</title>
+<style>
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,Arial,sans-serif;background:#f2f2f2;color:#111}
+header{background:#111;color:#fff;padding:14px;position:sticky;top:0;z-index:10}
+header h1{font-size:21px;margin:0}
+.topbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+button{font-size:16px;border:0;border-radius:10px;padding:12px 14px;background:#e4e4e7;color:#111;-webkit-appearance:none}
+button.blue{background:#2563eb;color:#fff}
+button.green{background:#16a34a;color:#fff}
+button.red{background:#dc2626;color:#fff}
+button.orange{background:#f59e0b;color:#111}
+main{padding:12px;max-width:1000px;margin:auto}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.card{background:#fff;border-radius:14px;padding:13px;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.card h2,.card h3{margin-top:0}
+.total{font-size:27px;font-weight:bold;margin:8px 0}
+.small{font-size:13px;color:#666}
+input,select{font-size:17px;width:100%;padding:12px;border:1px solid #ccc;border-radius:10px;background:#fff;color:#111;-webkit-appearance:none;box-sizing:border-box}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.row input,.row select{flex:1;min-width:140px}
+.prices{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}
+.prices button{background:#dbeafe;color:#1e3a8a;font-weight:bold}
+.item{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #eee;padding:10px 0;gap:8px}
+.item:last-child{border-bottom:0}
+.hidden{display:none}
+.section{margin-top:14px}
+.badge{display:inline-block;background:#eef2ff;color:#3730a3;border-radius:99px;padding:4px 8px;font-size:12px}
+.msg{background:#fff7ed;color:#9a3412;padding:10px;border-radius:10px;margin-top:10px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td,th{border-bottom:1px solid #eee;padding:8px;text-align:left}
+@media(min-width:700px){.grid{grid-template-columns:repeat(4,1fr)}.prices{grid-template-columns:repeat(6,1fr)}}
+</style>
+<link rel="manifest" href="manifest.webmanifest">
+</head>
+<body>
+<header>
+  <h1>🍸 Il mio Bar</h1>
+  <div class="topbar">
+    <button class="blue" onclick="showTables()">Tavoli</button>
+    <button onclick="showClients()">Clienti</button>
+    <button onclick="showHistory()">Storico</button>
+    <button onclick="addTable()">+ Tavolo</button>
+    <button onclick="backupData()">Backup</button>
+    <button onclick="document.getElementById('restoreFile').click()">Ripristina</button>
+    <input id="restoreFile" type="file" accept=".json,application/json" class="hidden" onchange="restoreData(this)">
+  </div>
+</header>
+
+<main id="app"></main>
+
+<script>
+var STORAGE_KEY = "IL_MIO_BAR_IPAD_SIMPLE_1";
+var prices = [1,1.5,2,2.5,3,3.5,4,4.5,5,6,7,8,10,12,15,20,25,30];
+var currentTableId = null;
+var state = loadState();
+
+function emptyState(){
+  var s = {nextTableId:14,nextClientId:1,tables:[],clients:[]};
+  var i;
+  for(i=1;i<=13;i++){
+    s.tables.push({id:i,name:"Tavolo "+i,clientId:null,items:[]});
+  }
+  return s;
+}
+
+function loadState(){
+  try{
+    var raw = localStorage.getItem(STORAGE_KEY);
+    if(raw){
+      var x = JSON.parse(raw);
+      if(x && x.tables && x.clients){ return x; }
+    }
+  }catch(e){}
+  return emptyState();
+}
+
+function saveState(){
+  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
+}
+
+function esc(v){
+  return String(v == null ? "" : v)
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;")
+    .replace(/'/g,"&#39;");
+}
+
+function euro(n){
+  n = Number(n || 0);
+  return "€ " + n.toFixed(2).replace(".",",");
+}
+
+function parseAmount(v){
+  if(v == null) return NaN;
+  v = String(v).replace(",",".").trim();
+  return Number(v);
+}
+
+function makeId(prefix){
+  return prefix + "_" + new Date().getTime() + "_" + Math.floor(Math.random()*100000);
+}
+
+function getTable(id){
+  var i;
+  for(i=0;i<state.tables.length;i++){
+    if(String(state.tables[i].id) === String(id)) return state.tables[i];
+  }
+  return null;
+}
+
+function getClient(id){
+  var i;
+  for(i=0;i<state.clients.length;i++){
+    if(String(state.clients[i].id) === String(id)) return state.clients[i];
+  }
+  return null;
+}
+
+function tableTotal(t){
+  var s=0,i;
+  for(i=0;i<t.items.length;i++) s += Number(t.items[i].amount || 0);
+  return s;
+}
+
+function clientSpent(c){
+  var s=0,i,h;
+  for(i=0;i<c.history.length;i++){
+    h=c.history[i];
+    if(h.type==="consumo" || h.type==="debito") s += Number(h.amount || 0);
+  }
+  return s;
+}
+
+function clientPaid(c){
+  var s=0,i,h;
+  for(i=0;i<c.history.length;i++){
+    h=c.history[i];
+    if(h.type==="pagamento") s += Number(h.amount || 0);
+  }
+  return s;
+}
+
+function clientBalance(c){
+  var v = clientSpent(c) - clientPaid(c);
+  return v < 0 ? 0 : v;
+}
+
+function addHistory(c,type,amount,label,sourceItemId){
+  c.history.push({
+    id:makeId("h"),
+    type:type,
+    amount:Number(amount),
+    label:label,
+    date:new Date().toISOString(),
+    sourceItemId:sourceItemId || null
+  });
+}
+
+function showTables(){
+  currentTableId=null;
+  var html='<div class="grid">';
+  var i,t,c;
+  for(i=0;i<state.tables.length;i++){
+    t=state.tables[i];
+    c=t.clientId ? getClient(t.clientId) : null;
+    html+='<div class="card">';
+    html+='<div class="row" style="justify-content:space-between"><h3 style="margin:0">'+esc(t.name)+'</h3><span class="badge">'+t.items.length+' articoli</span></div>';
+    html+='<div class="total">'+euro(tableTotal(t))+'</div>';
+    html+='<div class="small">'+(c ? 'Cliente: '+esc(c.name)+' · Debito '+euro(clientBalance(c)) : 'Nessun cliente')+'</div>';
+    html+='<div class="section"><button class="blue" onclick="openTable('+t.id+')">Apri tavolo</button></div>';
+    html+='</div>';
+  }
+  html+='</div>';
+  document.getElementById("app").innerHTML=html;
+}
+
+function openTable(id){
+  currentTableId=id;
+  renderTable();
+}
+
+function renderTable(){
+  var t=getTable(currentTableId);
+  if(!t){showTables();return;}
+  var c=t.clientId ? getClient(t.clientId) : null;
+  var html='<button onclick="showTables()">← Indietro</button>';
+  html+='<div class="card section"><h2>'+esc(t.name)+'</h2>';
+
+  html+='<div class="small">Rinomina tavolo</div>';
+  html+='<div class="row"><input id="tableName" value="'+esc(t.name)+'"><button class="green" onclick="renameTable()">Salva nome</button></div>';
+
+  html+='<div class="section"><div class="small">Cliente associato</div>';
+  html+='<div class="row"><select id="clientSelect"><option value="">Nessun cliente</option>';
+  var i,x;
+  for(i=0;i<state.clients.length;i++){
+    x=state.clients[i];
+    html+='<option value="'+esc(x.id)+'"'+(String(x.id)===String(t.clientId)?' selected':'')+'>'+esc(x.name)+'</option>';
+  }
+  html+='</select><button onclick="associateClient()">Associa</button></div>';
+  html+='<div class="section"><button onclick="newClientForTable()">+ Nuovo cliente</button></div>';
+  if(c) html+='<div class="small section">Cliente: <b>'+esc(c.name)+'</b> · Debito attuale: <b>'+euro(clientBalance(c))+'</b></div>';
+  html+='</div>';
+
+  html+='<div class="section"><div class="small">Aggiungi prezzo</div><div class="prices">';
+  for(i=0;i<prices.length;i++) html+='<button onclick="addPrice('+prices[i]+')">'+euro(prices[i])+'</button>';
+  html+='</div></div>';
+
+  html+='<div class="section"><div class="row"><input id="customPrice" inputmode="decimal" placeholder="Altro importo, es. 4,50"><button class="blue" onclick="addCustomPrice()">Aggiungi</button></div></div>';
+
+  html+='<div class="section"><h3>Conto</h3>';
+  if(t.items.length===0) html+='<div class="small">Nessun articolo.</div>';
+  for(i=0;i<t.items.length;i++){
+    x=t.items[i];
+    html+='<div class="item"><b>'+euro(x.amount)+'</b><button class="red" onclick="deleteItem(\''+esc(x.id)+'\')">Elimina</button></div>';
+  }
+  html+='</div>';
+  html+='<div class="total">Totale: '+euro(tableTotal(t))+'</div>';
+  html+='<div class="row"><button class="green" onclick="showPaymentBox()">Pagamento</button><button class="orange" onclick="closeWithoutPayment()">Chiudi senza pagamento</button></div>';
+  html+='<div id="paymentBox" class="section hidden"></div>';
+  html+='</div>';
+
+  document.getElementById("app").innerHTML=html;
+}
+
+function renameTable(){
+  var t=getTable(currentTableId);
+  var v=document.getElementById("tableName").value.trim();
+  if(v===""){showMessage("Scrivi un nome.");return;}
+  t.name=v;
+  saveState();
+  renderTable();
+}
+
+function associateClient(){
+  var t=getTable(currentTableId);
+  var cid=document.getElementById("clientSelect").value;
+  if(cid===""){
+    if(t.items.length>0){showMessage("Prima chiudi il conto, poi puoi togliere il cliente.");return;}
+    t.clientId=null;
+    saveState();renderTable();return;
+  }
+  if(t.clientId && String(t.clientId)!==String(cid) && t.items.length>0){
+    showMessage("Prima chiudi il conto, poi puoi cambiare cliente.");
+    return;
+  }
+  t.clientId=cid;
+  var c=getClient(cid);
+  var i,item,exists,j;
+  for(i=0;i<t.items.length;i++){
+    item=t.items[i];
+    exists=false;
+    for(j=0;j<c.history.length;j++){
+      if(c.history[j].sourceItemId===item.id){exists=true;break;}
+    }
+    if(!exists) addHistory(c,"consumo",item.amount,"Consumo - "+t.name,item.id);
+  }
+  saveState();
+  renderTable();
+}
+
+function addPrice(n){
+  var t=getTable(currentTableId);
+  var item={id:makeId("i"),amount:Number(n),date:new Date().toISOString()};
+  t.items.push(item);
+  if(t.clientId){
+    addHistory(getClient(t.clientId),"consumo",item.amount,"Consumo - "+t.name,item.id);
+  }
+  saveState();
+  renderTable();
+}
+
+function addCustomPrice(){
+  var n=parseAmount(document.getElementById("customPrice").value);
+  if(!isFinite(n) || n<=0){showMessage("Inserisci un importo valido.");return;}
+  addPrice(n);
+}
+
+function deleteItem(itemId){
+  var t=getTable(currentTableId);
+  var i,item=null;
+  for(i=0;i<t.items.length;i++){
+    if(t.items[i].id===itemId){item=t.items[i];t.items.splice(i,1);break;}
+  }
+  if(item && t.clientId){
+    var c=getClient(t.clientId);
+    var newHist=[];
+    for(i=0;i<c.history.length;i++){
+      if(c.history[i].sourceItemId!==itemId) newHist.push(c.history[i]);
+    }
+    c.history=newHist;
+  }
+  saveState();
+  renderTable();
+}
+
+function newClientForTable(){
+  var html='<div class="card">';
+  html+='<h3>Nuovo cliente</h3>';
+  html+='<div class="small">Nome e cognome</div><input id="newName" placeholder="Mario Rossi">';
+  html+='<div class="small section">Debito iniziale</div><input id="newDebt" inputmode="decimal" placeholder="0,00">';
+  html+='<div class="row section"><button class="green" onclick="saveNewClientForTable()">Salva cliente</button><button onclick="renderTable()">Annulla</button></div>';
+  html+='</div>';
+  document.getElementById("app").innerHTML=html;
+}
+
+function saveNewClientForTable(){
+  var name=document.getElementById("newName").value.trim();
+  var debt=parseAmount(document.getElementById("newDebt").value || "0");
+  if(name===""){showMessage("Scrivi il nome del cliente.");return;}
+  if(!isFinite(debt) || debt<0){showMessage("Debito iniziale non valido.");return;}
+  var c={id:"c"+state.nextClientId,name:name,history:[]};
+  state.nextClientId++;
+  if(debt>0) addHistory(c,"debito",debt,"Debito iniziale",null);
+  state.clients.push(c);
+  var t=getTable(currentTableId);
+  t.clientId=c.id;
+
+  var i;
+  for(i=0;i<t.items.length;i++){
+    addHistory(c,"consumo",t.items[i].amount,"Consumo - "+t.name,t.items[i].id);
+  }
+  saveState();
+  renderTable();
+}
+
+function showPaymentBox(){
+  var t=getTable(currentTableId);
+  if(!t.clientId){showMessage("Associa prima un cliente.");return;}
+  if(t.items.length===0){showMessage("Il tavolo è vuoto.");return;}
+  var box=document.getElementById("paymentBox");
+  box.className="section";
+  box.innerHTML='<div class="card"><h3>Pagamento</h3><div class="small">Quanto paga?</div><div class="row"><input id="payAmount" inputmode="decimal" value="'+tableTotal(t).toFixed(2)+'"><button class="green" onclick="confirmPayment()">Registra</button><button onclick="hidePaymentBox()">Annulla</button></div></div>';
+}
+
+function hidePaymentBox(){
+  var box=document.getElementById("paymentBox");
+  if(box){box.className="section hidden";box.innerHTML="";}
+}
+
+function confirmPayment(){
+  var t=getTable(currentTableId);
+  var c=getClient(t.clientId);
+  var n=parseAmount(document.getElementById("payAmount").value);
+  var total=tableTotal(t);
+  if(!isFinite(n) || n<=0){showMessage("Inserisci un pagamento valido.");return;}
+  if(n>total){showMessage("Il pagamento non può superare il totale del tavolo.");return;}
+  addHistory(c,"pagamento",n,"Pagamento - "+t.name,null);
+
+  if(Math.abs(n-total)<0.001){
+    t.items=[];
+  }else{
+    var remaining=total-n;
+    t.items=[{id:makeId("i"),amount:remaining,date:new Date().toISOString(),synthetic:true}];
+  }
+  saveState();
+  renderTable();
+}
+
+function closeWithoutPayment(){
+  var t=getTable(currentTableId);
+  if(t.items.length===0){showMessage("Il tavolo è già vuoto.");return;}
+  if(!t.clientId){showMessage("Associa prima un cliente, così il debito resta salvato.");return;}
+  t.items=[];
+  saveState();
+  renderTable();
+}
+
+function showClients(){
+  currentTableId=null;
+  var html='<div class="card"><h2>Clienti</h2><button class="blue" onclick="newClientScreen()">+ Nuovo cliente</button></div>';
+  var i,c;
+  for(i=0;i<state.clients.length;i++){
+    c=state.clients[i];
+    html+='<div class="card"><h3>'+esc(c.name)+'</h3>';
+    html+='<div>Totale consumi: <b>'+euro(clientSpent(c))+'</b></div>';
+    html+='<div>Totale pagato: <b>'+euro(clientPaid(c))+'</b></div>';
+    html+='<div class="total">Debito: '+euro(clientBalance(c))+'</div>';
+    html+='<button class="blue" onclick="openClient(\''+esc(c.id)+'\')">Apri scheda</button></div>';
+  }
+  if(state.clients.length===0) html+='<div class="card small">Nessun cliente.</div>';
+  document.getElementById("app").innerHTML=html;
+}
+
+function newClientScreen(){
+  var html='<div class="card"><h2>Nuovo cliente</h2>';
+  html+='<div class="small">Nome e cognome</div><input id="newName" placeholder="Mario Rossi">';
+  html+='<div class="small section">Debito iniziale</div><input id="newDebt" inputmode="decimal" placeholder="0,00">';
+  html+='<div class="row section"><button class="green" onclick="saveNewClient()">Salva</button><button onclick="showClients()">Annulla</button></div></div>';
+  document.getElementById("app").innerHTML=html;
+}
+
+function saveNewClient(){
+  var name=document.getElementById("newName").value.trim();
+  var debt=parseAmount(document.getElementById("newDebt").value || "0");
+  if(name===""){showMessage("Scrivi il nome del cliente.");return;}
+  if(!isFinite(debt)||debt<0){showMessage("Debito iniziale non valido.");return;}
+  var c={id:"c"+state.nextClientId,name:name,history:[]};
+  state.nextClientId++;
+  if(debt>0) addHistory(c,"debito",debt,"Debito iniziale",null);
+  state.clients.push(c);
+  saveState();
+  showClients();
+}
+
+function openClient(cid){
+  var c=getClient(cid);
+  var html='<button onclick="showClients()">← Clienti</button>';
+  html+='<div class="card section"><h2>'+esc(c.name)+'</h2>';
+  html+='<div>Totale consumi: <b>'+euro(clientSpent(c))+'</b></div>';
+  html+='<div>Totale pagato: <b>'+euro(clientPaid(c))+'</b></div>';
+  html+='<div class="total">Debito: '+euro(clientBalance(c))+'</div>';
+  html+='<div class="small">Nuovo pagamento</div><div class="row"><input id="clientPay" inputmode="decimal" placeholder="0,00"><button class="green" onclick="clientPayment(\''+esc(c.id)+'\')">Registra</button></div>';
+  html+='<div class="section"><h3>Storico</h3>';
+  var i,h;
+  for(i=c.history.length-1;i>=0;i--){
+    h=c.history[i];
+    html+='<div class="item"><div><b>'+esc(h.label)+'</b><div class="small">'+new Date(h.date).toLocaleString("it-IT")+'</div></div><b>'+(h.type==="pagamento"?"−":"+")+euro(h.amount)+'</b></div>';
+  }
+  if(c.history.length===0) html+='<div class="small">Nessun movimento.</div>';
+  html+='</div></div>';
+  document.getElementById("app").innerHTML=html;
+}
+
+function clientPayment(cid){
+  var c=getClient(cid);
+  var n=parseAmount(document.getElementById("clientPay").value);
+  if(!isFinite(n)||n<=0){showMessage("Inserisci un pagamento valido.");return;}
+  if(n>clientBalance(c)){showMessage("Il pagamento supera il debito.");return;}
+  addHistory(c,"pagamento",n,"Pagamento cliente",null);
+  saveState();
+  openClient(cid);
+}
+
+function showHistory(){
+  currentTableId=null;
+  var rows=[],i,j,c,h;
+  for(i=0;i<state.clients.length;i++){
+    c=state.clients[i];
+    for(j=0;j<c.history.length;j++){
+      h=c.history[j];
+      rows.push({name:c.name,type:h.type,amount:h.amount,label:h.label,date:h.date});
+    }
+  }
+  rows.sort(function(a,b){return new Date(b.date)-new Date(a.date);});
+  var html='<div class="card"><h2>Storico generale</h2>';
+  if(rows.length===0){html+='<div class="small">Nessun movimento.</div>';}
+  else{
+    html+='<div style="overflow:auto"><table><tr><th>Data</th><th>Cliente</th><th>Movimento</th><th>Importo</th></tr>';
+    for(i=0;i<rows.length;i++){
+      h=rows[i];
+      html+='<tr><td>'+new Date(h.date).toLocaleString("it-IT")+'</td><td>'+esc(h.name)+'</td><td>'+esc(h.label)+'</td><td>'+(h.type==="pagamento"?"−":"+")+euro(h.amount)+'</td></tr>';
+    }
+    html+='</table></div>';
+  }
+  html+='</div>';
+  document.getElementById("app").innerHTML=html;
+}
+
+function addTable(){
+  var id=state.nextTableId;
+  state.nextTableId++;
+  state.tables.push({id:id,name:"Tavolo "+id,clientId:null,items:[]});
+  saveState();
+  showTables();
+}
+
+function showMessage(text){
+  var old=document.getElementById("messageBox");
+  if(old) old.parentNode.removeChild(old);
+  var d=document.createElement("div");
+  d.id="messageBox";
+  d.className="msg";
+  d.innerHTML=esc(text);
+  document.getElementById("app").insertBefore(d,document.getElementById("app").firstChild);
+  window.setTimeout(function(){
+    var x=document.getElementById("messageBox");
+    if(x && x.parentNode) x.parentNode.removeChild(x);
+  },2500);
+}
+
+function backupData(){
+  try{
+    var blob=new Blob([JSON.stringify(state,null,2)],{type:"application/json"});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement("a");
+    a.href=url;
+    a.download="backup-il-mio-bar.json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.setTimeout(function(){URL.revokeObjectURL(url);},1000);
+  }catch(e){
+    showMessage("Backup non riuscito.");
+  }
+}
+
+function restoreData(input){
+  var file=input.files && input.files[0];
+  if(!file) return;
+  var reader=new FileReader();
+  reader.onload=function(){
+    try{
+      var x=JSON.parse(reader.result);
+      if(!x || !x.tables || !x.clients) throw new Error("bad");
+      state=x;
+      saveState();
+      showTables();
+      showMessage("Backup ripristinato.");
+    }catch(e){
+      showMessage("File di backup non valido.");
+    }
+    input.value="";
+  };
+  reader.readAsText(file);
+}
+
+showTables();
+saveState();
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('./sw.js').catch(function(){});
+  });
+}
+</script>
+</body>
+</html>
