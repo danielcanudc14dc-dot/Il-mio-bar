@@ -31,6 +31,10 @@ input,select{font-size:17px;width:100%;padding:12px;border:1px solid #ccc;border
 .hidden{display:none}
 .section{margin-top:14px}
 .badge{display:inline-block;background:#eef2ff;color:#3730a3;border-radius:99px;padding:4px 8px;font-size:12px}
+.person{border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin-top:10px;background:#fafafa}
+.personHead{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}
+.activeClient{background:#ecfdf5;border:1px solid #bbf7d0;border-radius:10px;padding:10px;margin-top:10px}
+.warn{background:#fef2f2;color:#991b1b;border-radius:10px;padding:10px;margin-top:10px}
 .msg{background:#fff7ed;color:#9a3412;padding:10px;border-radius:10px;margin-top:10px}
 table{width:100%;border-collapse:collapse;font-size:13px}
 td,th{border-bottom:1px solid #eee;padding:8px;text-align:left}
@@ -56,7 +60,7 @@ td,th{border-bottom:1px solid #eee;padding:8px;text-align:left}
 
 <script>
 var STORAGE_KEY = "IL_MIO_BAR_IPAD_SIMPLE_1";
-var prices = [1,1.5,2,2.5,3,3.5,4,4.5,5,6,7,8,10,12,15,20,25,30];
+var prices = [0.1,0.2,0.3,1,1.2,1.5,1.8,2,2.5,2.7,3,3.5,4,4.5,5,6,7,8,10,12,15,20,25,30];
 var currentTableId = null;
 var state = loadState();
 
@@ -64,9 +68,33 @@ function emptyState(){
   var s = {nextTableId:14,nextClientId:1,tables:[],clients:[]};
   var i;
   for(i=1;i<=13;i++){
-    s.tables.push({id:i,name:"Tavolo "+i,clientId:null,items:[]});
+    s.tables.push({id:i,name:"Tavolo "+i,activeClientId:null,items:[],payments:[]});
   }
   return s;
+}
+
+function migrateState(x){
+  if(!x || !x.tables || !x.clients) return emptyState();
+  var i,j,t,item,p,oldClient;
+  if(!x.nextTableId) x.nextTableId=14;
+  if(!x.nextClientId) x.nextClientId=1;
+  for(i=0;i<x.tables.length;i++){
+    t=x.tables[i];
+    if(!t.items) t.items=[];
+    if(!t.payments) t.payments=[];
+    oldClient=(typeof t.clientId!=="undefined" && t.clientId!==null) ? t.clientId : null;
+    if(typeof t.activeClientId==="undefined") t.activeClientId=oldClient;
+    for(j=0;j<t.items.length;j++){
+      item=t.items[j];
+      if(typeof item.clientId==="undefined") item.clientId=oldClient;
+    }
+    for(j=0;j<t.payments.length;j++){
+      p=t.payments[j];
+      if(typeof p.clientId==="undefined") p.clientId=oldClient;
+    }
+    if(typeof t.clientId!=="undefined") delete t.clientId;
+  }
+  return x;
 }
 
 function loadState(){
@@ -74,14 +102,15 @@ function loadState(){
     var raw = localStorage.getItem(STORAGE_KEY);
     if(raw){
       var x = JSON.parse(raw);
-      if(x && x.tables && x.clients){ return x; }
+      if(x && x.tables && x.clients){ return migrateState(x); }
     }
   }catch(e){}
   return emptyState();
 }
 
 function saveState(){
-  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
+  try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+  catch(e){ showMessage("Memoria del dispositivo piena: fai subito un backup."); }
 }
 
 function esc(v){
@@ -108,6 +137,10 @@ function makeId(prefix){
   return prefix + "_" + new Date().getTime() + "_" + Math.floor(Math.random()*100000);
 }
 
+function sameClient(a,b){
+  return String(a == null ? "" : a) === String(b == null ? "" : b);
+}
+
 function getTable(id){
   var i;
   for(i=0;i<state.tables.length;i++){
@@ -124,10 +157,44 @@ function getClient(id){
   return null;
 }
 
-function tableTotal(t){
+function clientTableGross(t,cid){
   var s=0,i;
-  for(i=0;i<t.items.length;i++) s += Number(t.items[i].amount || 0);
+  for(i=0;i<t.items.length;i++){
+    if(sameClient(t.items[i].clientId,cid)) s += Number(t.items[i].amount || 0);
+  }
   return s;
+}
+
+function clientTablePaid(t,cid){
+  var s=0,i;
+  for(i=0;i<t.payments.length;i++){
+    if(sameClient(t.payments[i].clientId,cid)) s += Number(t.payments[i].amount || 0);
+  }
+  return s;
+}
+
+function clientTableDue(t,cid){
+  var v=clientTableGross(t,cid)-clientTablePaid(t,cid);
+  return v < 0.001 ? 0 : v;
+}
+
+function tableTotal(t){
+  var s=0,i,ids=getTableClientIds(t);
+  for(i=0;i<ids.length;i++) s += clientTableDue(t,ids[i]);
+  return s;
+}
+
+function getTableClientIds(t){
+  var ids=[],i,j,cid,found;
+  for(i=0;i<t.items.length;i++){
+    cid=t.items[i].clientId == null ? "" : String(t.items[i].clientId);
+    found=false;
+    for(j=0;j<ids.length;j++){
+      if(sameClient(ids[j],cid)){found=true;break;}
+    }
+    if(!found) ids.push(cid);
+  }
+  return ids;
 }
 
 function clientSpent(c){
@@ -153,6 +220,17 @@ function clientBalance(c){
   return v < 0 ? 0 : v;
 }
 
+function clientOpenDue(cid){
+  var s=0,i;
+  for(i=0;i<state.tables.length;i++) s += clientTableDue(state.tables[i],cid);
+  return s;
+}
+
+function clientOldDebt(c){
+  var v=clientBalance(c)-clientOpenDue(c.id);
+  return v < 0 ? 0 : v;
+}
+
 function addHistory(c,type,amount,label,sourceItemId){
   c.history.push({
     id:makeId("h"),
@@ -164,17 +242,28 @@ function addHistory(c,type,amount,label,sourceItemId){
   });
 }
 
+function tableSummaryHtml(t){
+  var ids=getTableClientIds(t),parts=[],i,cid,c,due;
+  for(i=0;i<ids.length;i++){
+    cid=ids[i];
+    due=clientTableDue(t,cid);
+    if(due<=0) continue;
+    c=cid ? getClient(cid) : null;
+    parts.push((c?esc(c.name):"Senza cliente")+": <b>"+euro(due)+"</b>");
+  }
+  return parts.length ? parts.join("<br>") : "Nessun conto aperto";
+}
+
 function showTables(){
   currentTableId=null;
   var html='<div class="grid">';
-  var i,t,c;
+  var i,t;
   for(i=0;i<state.tables.length;i++){
     t=state.tables[i];
-    c=t.clientId ? getClient(t.clientId) : null;
     html+='<div class="card">';
     html+='<div class="row" style="justify-content:space-between"><h3 style="margin:0">'+esc(t.name)+'</h3><span class="badge">'+t.items.length+' articoli</span></div>';
     html+='<div class="total">'+euro(tableTotal(t))+'</div>';
-    html+='<div class="small">'+(c ? 'Cliente: '+esc(c.name)+' · Debito '+euro(clientBalance(c)) : 'Nessun cliente')+'</div>';
+    html+='<div class="small">'+tableSummaryHtml(t)+'</div>';
     html+='<div class="section"><button class="blue" onclick="openTable('+t.id+')">Apri tavolo</button></div>';
     html+='</div>';
   }
@@ -190,23 +279,31 @@ function openTable(id){
 function renderTable(){
   var t=getTable(currentTableId);
   if(!t){showTables();return;}
-  var c=t.clientId ? getClient(t.clientId) : null;
+  var active=t.activeClientId ? getClient(t.activeClientId) : null;
+  if(t.activeClientId && !active) t.activeClientId=null;
   var html='<button onclick="showTables()">← Indietro</button>';
   html+='<div class="card section"><h2>'+esc(t.name)+'</h2>';
 
   html+='<div class="small">Rinomina tavolo</div>';
   html+='<div class="row"><input id="tableName" value="'+esc(t.name)+'"><button class="green" onclick="renameTable()">Salva nome</button></div>';
 
-  html+='<div class="section"><div class="small">Cliente associato</div>';
-  html+='<div class="row"><select id="clientSelect"><option value="">Nessun cliente</option>';
+  html+='<div class="section"><div class="small">Cliente per i prossimi prezzi / prossimo giro</div>';
+  html+='<select id="clientSelect" onchange="selectClientForTable()"><option value="">Seleziona cliente…</option>';
   var i,x;
   for(i=0;i<state.clients.length;i++){
     x=state.clients[i];
-    html+='<option value="'+esc(x.id)+'"'+(String(x.id)===String(t.clientId)?' selected':'')+'>'+esc(x.name)+'</option>';
+    html+='<option value="'+esc(x.id)+'"'+(sameClient(x.id,t.activeClientId)?' selected':'')+'>'+esc(x.name)+'</option>';
   }
-  html+='</select><button onclick="associateClient()">Associa</button></div>';
+  html+='</select>';
   html+='<div class="section"><button onclick="newClientForTable()">+ Nuovo cliente</button></div>';
-  if(c) html+='<div class="small section">Cliente: <b>'+esc(c.name)+'</b> · Debito attuale: <b>'+euro(clientBalance(c))+'</b></div>';
+  if(active){
+    html+='<div class="activeClient">Cliente attivo: <b>'+esc(active.name)+'</b> · Debito totale cliente: <b>'+euro(clientBalance(active))+'</b><br><span class="small">I prezzi che premi adesso verranno assegnati a '+esc(active.name)+'.</span></div>';
+  }else{
+    html+='<div class="msg">Seleziona prima il cliente, poi premi i prezzi del suo giro.</div>';
+  }
+  if(hasUnassignedItems(t) && active){
+    html+='<div class="section"><button class="orange" onclick="assignUnassignedItems()">Assegna articoli senza cliente a '+esc(active.name)+'</button></div>';
+  }
   html+='</div>';
 
   html+='<div class="section"><div class="small">Aggiungi prezzo</div><div class="prices">';
@@ -215,15 +312,32 @@ function renderTable(){
 
   html+='<div class="section"><div class="row"><input id="customPrice" inputmode="decimal" placeholder="Altro importo, es. 4,50"><button class="blue" onclick="addCustomPrice()">Aggiungi</button></div></div>';
 
-  html+='<div class="section"><h3>Conto</h3>';
+  html+='<div class="section"><h3>Conto per persona</h3>';
+  var ids=getTableClientIds(t),cid,c,gross,paid,due,j,item;
   if(t.items.length===0) html+='<div class="small">Nessun articolo.</div>';
-  for(i=0;i<t.items.length;i++){
-    x=t.items[i];
-    html+='<div class="item"><b>'+euro(x.amount)+'</b><button class="red" onclick="deleteItem(\''+esc(x.id)+'\')">Elimina</button></div>';
+  for(i=0;i<ids.length;i++){
+    cid=ids[i];
+    c=cid ? getClient(cid) : null;
+    gross=clientTableGross(t,cid);
+    paid=clientTablePaid(t,cid);
+    due=clientTableDue(t,cid);
+    html+='<div class="person">';
+    html+='<div class="personHead"><h3 style="margin:0">'+(c?esc(c.name):'Senza cliente')+'</h3><b>'+euro(due)+'</b></div>';
+    if(paid>0) html+='<div class="small">Consumazioni '+euro(gross)+' · già pagato '+euro(paid)+' · da pagare '+euro(due)+'</div>';
+    for(j=0;j<t.items.length;j++){
+      item=t.items[j];
+      if(!sameClient(item.clientId,cid)) continue;
+      html+='<div class="item"><b>'+euro(item.amount)+'</b><button class="red" onclick="deleteItem(\''+esc(item.id)+'\')">Elimina</button></div>';
+    }
+    if(c && due>0){
+      html+='<div class="row section"><button class="green" onclick="showPaymentBox(\''+esc(c.id)+'\')">Pagamento</button><button class="orange" onclick="closeClientWithoutPayment(\''+esc(c.id)+'\')">Lascia a debito</button></div>';
+    }
+    if(!c) html+='<div class="warn">Questi articoli non hanno ancora un cliente. Seleziona un cliente sopra e assegnali prima di chiudere il conto.</div>';
+    html+='</div>';
   }
   html+='</div>';
-  html+='<div class="total">Totale: '+euro(tableTotal(t))+'</div>';
-  html+='<div class="row"><button class="green" onclick="showPaymentBox()">Pagamento</button><button class="orange" onclick="closeWithoutPayment()">Chiudi senza pagamento</button></div>';
+  html+='<div class="total">Totale tavolo da pagare: '+euro(tableTotal(t))+'</div>';
+  html+='<div class="row"><button class="orange" onclick="closeWithoutPayment()">Chiudi tutto a debito</button></div>';
   html+='<div id="paymentBox" class="section hidden"></div>';
   html+='</div>';
 
@@ -239,27 +353,31 @@ function renameTable(){
   renderTable();
 }
 
-function associateClient(){
+function selectClientForTable(){
   var t=getTable(currentTableId);
   var cid=document.getElementById("clientSelect").value;
-  if(cid===""){
-    if(t.items.length>0){showMessage("Prima chiudi il conto, poi puoi togliere il cliente.");return;}
-    t.clientId=null;
-    saveState();renderTable();return;
-  }
-  if(t.clientId && String(t.clientId)!==String(cid) && t.items.length>0){
-    showMessage("Prima chiudi il conto, poi puoi cambiare cliente.");
-    return;
-  }
-  t.clientId=cid;
-  var c=getClient(cid);
-  var i,item,exists,j;
+  t.activeClientId=cid || null;
+  saveState();
+  renderTable();
+}
+
+function hasUnassignedItems(t){
+  var i;
+  for(i=0;i<t.items.length;i++) if(!t.items[i].clientId) return true;
+  return false;
+}
+
+function assignUnassignedItems(){
+  var t=getTable(currentTableId);
+  if(!t.activeClientId){showMessage("Seleziona prima un cliente.");return;}
+  var c=getClient(t.activeClientId),i,item,exists,j;
+  if(!c){showMessage("Cliente non trovato.");return;}
   for(i=0;i<t.items.length;i++){
     item=t.items[i];
+    if(item.clientId) continue;
+    item.clientId=c.id;
     exists=false;
-    for(j=0;j<c.history.length;j++){
-      if(c.history[j].sourceItemId===item.id){exists=true;break;}
-    }
+    for(j=0;j<c.history.length;j++) if(c.history[j].sourceItemId===item.id){exists=true;break;}
     if(!exists) addHistory(c,"consumo",item.amount,"Consumo - "+t.name,item.id);
   }
   saveState();
@@ -268,11 +386,11 @@ function associateClient(){
 
 function addPrice(n){
   var t=getTable(currentTableId);
-  var item={id:makeId("i"),amount:Number(n),date:new Date().toISOString()};
+  var c=t.activeClientId ? getClient(t.activeClientId) : null;
+  if(!c){showMessage("Seleziona prima il cliente del giro.");return;}
+  var item={id:makeId("i"),amount:Number(n),date:new Date().toISOString(),clientId:c.id};
   t.items.push(item);
-  if(t.clientId){
-    addHistory(getClient(t.clientId),"consumo",item.amount,"Consumo - "+t.name,item.id);
-  }
+  addHistory(c,"consumo",item.amount,"Consumo - "+t.name,item.id);
   saveState();
   renderTable();
 }
@@ -285,17 +403,28 @@ function addCustomPrice(){
 
 function deleteItem(itemId){
   var t=getTable(currentTableId);
-  var i,item=null;
+  var i,item=null,index=-1;
   for(i=0;i<t.items.length;i++){
-    if(t.items[i].id===itemId){item=t.items[i];t.items.splice(i,1);break;}
+    if(t.items[i].id===itemId){item=t.items[i];index=i;break;}
   }
-  if(item && t.clientId){
-    var c=getClient(t.clientId);
-    var newHist=[];
-    for(i=0;i<c.history.length;i++){
-      if(c.history[i].sourceItemId!==itemId) newHist.push(c.history[i]);
+  if(!item) return;
+  var cid=item.clientId || "";
+  var grossAfter=clientTableGross(t,cid)-Number(item.amount||0);
+  var alreadyPaid=clientTablePaid(t,cid);
+  if(alreadyPaid>grossAfter+0.001){
+    showMessage("Non puoi eliminare questo articolo: una parte di questo conto è già stata pagata.");
+    return;
+  }
+  t.items.splice(index,1);
+  if(item.clientId){
+    var c=getClient(item.clientId);
+    if(c){
+      var newHist=[];
+      for(i=0;i<c.history.length;i++){
+        if(c.history[i].sourceItemId!==itemId) newHist.push(c.history[i]);
+      }
+      c.history=newHist;
     }
-    c.history=newHist;
   }
   saveState();
   renderTable();
@@ -306,7 +435,7 @@ function newClientForTable(){
   html+='<h3>Nuovo cliente</h3>';
   html+='<div class="small">Nome e cognome</div><input id="newName" placeholder="Mario Rossi">';
   html+='<div class="small section">Debito iniziale</div><input id="newDebt" inputmode="decimal" placeholder="0,00">';
-  html+='<div class="row section"><button class="green" onclick="saveNewClientForTable()">Salva cliente</button><button onclick="renderTable()">Annulla</button></div>';
+  html+='<div class="row section"><button class="green" onclick="saveNewClientForTable()">Salva e usa cliente</button><button onclick="renderTable()">Annulla</button></div>';
   html+='</div>';
   document.getElementById("app").innerHTML=html;
 }
@@ -321,23 +450,21 @@ function saveNewClientForTable(){
   if(debt>0) addHistory(c,"debito",debt,"Debito iniziale",null);
   state.clients.push(c);
   var t=getTable(currentTableId);
-  t.clientId=c.id;
-
-  var i;
-  for(i=0;i<t.items.length;i++){
-    addHistory(c,"consumo",t.items[i].amount,"Consumo - "+t.name,t.items[i].id);
-  }
+  t.activeClientId=c.id;
   saveState();
   renderTable();
 }
 
-function showPaymentBox(){
+function showPaymentBox(cid){
   var t=getTable(currentTableId);
-  if(!t.clientId){showMessage("Associa prima un cliente.");return;}
-  if(t.items.length===0){showMessage("Il tavolo è vuoto.");return;}
+  var c=getClient(cid);
+  var due=clientTableDue(t,cid);
+  if(!c){showMessage("Cliente non trovato.");return;}
+  if(due<=0){showMessage("Questo cliente non ha nulla da pagare sul tavolo.");return;}
   var box=document.getElementById("paymentBox");
   box.className="section";
-  box.innerHTML='<div class="card"><h3>Pagamento</h3><div class="small">Quanto paga?</div><div class="row"><input id="payAmount" inputmode="decimal" value="'+tableTotal(t).toFixed(2)+'"><button class="green" onclick="confirmPayment()">Registra</button><button onclick="hidePaymentBox()">Annulla</button></div></div>';
+  box.innerHTML='<div class="card"><h3>Pagamento - '+esc(c.name)+'</h3><div class="small">Da pagare sul tavolo: '+euro(due)+'</div><div class="row"><input id="payAmount" inputmode="decimal" value="'+due.toFixed(2)+'"><button class="green" onclick="confirmPayment(\''+esc(c.id)+'\')">Registra</button><button onclick="hidePaymentBox()">Annulla</button></div></div>';
+  box.scrollIntoView({behavior:"smooth",block:"nearest"});
 }
 
 function hidePaymentBox(){
@@ -345,21 +472,35 @@ function hidePaymentBox(){
   if(box){box.className="section hidden";box.innerHTML="";}
 }
 
-function confirmPayment(){
-  var t=getTable(currentTableId);
-  var c=getClient(t.clientId);
-  var n=parseAmount(document.getElementById("payAmount").value);
-  var total=tableTotal(t);
-  if(!isFinite(n) || n<=0){showMessage("Inserisci un pagamento valido.");return;}
-  if(n>total){showMessage("Il pagamento non può superare il totale del tavolo.");return;}
-  addHistory(c,"pagamento",n,"Pagamento - "+t.name,null);
+function clearClientFromTable(t,cid){
+  var newItems=[],newPayments=[],i;
+  for(i=0;i<t.items.length;i++) if(!sameClient(t.items[i].clientId,cid)) newItems.push(t.items[i]);
+  for(i=0;i<t.payments.length;i++) if(!sameClient(t.payments[i].clientId,cid)) newPayments.push(t.payments[i]);
+  t.items=newItems;
+  t.payments=newPayments;
+}
 
-  if(Math.abs(n-total)<0.001){
-    t.items=[];
-  }else{
-    var remaining=total-n;
-    t.items=[{id:makeId("i"),amount:remaining,date:new Date().toISOString(),synthetic:true}];
-  }
+function confirmPayment(cid){
+  var t=getTable(currentTableId);
+  var c=getClient(cid);
+  var n=parseAmount(document.getElementById("payAmount").value);
+  var due=clientTableDue(t,cid);
+  if(!c){showMessage("Cliente non trovato.");return;}
+  if(!isFinite(n) || n<=0){showMessage("Inserisci un pagamento valido.");return;}
+  if(n>due+0.001){showMessage("Il pagamento non può superare il totale di "+c.name+" sul tavolo.");return;}
+  addHistory(c,"pagamento",n,"Pagamento - "+t.name,null);
+  t.payments.push({id:makeId("p"),clientId:c.id,amount:n,date:new Date().toISOString()});
+  if(due-n<0.001) clearClientFromTable(t,c.id);
+  saveState();
+  renderTable();
+}
+
+function closeClientWithoutPayment(cid){
+  var t=getTable(currentTableId);
+  var c=getClient(cid);
+  if(!c){showMessage("Cliente non trovato.");return;}
+  if(clientTableDue(t,cid)<=0){showMessage("Questo cliente non ha un conto aperto.");return;}
+  clearClientFromTable(t,cid);
   saveState();
   renderTable();
 }
@@ -367,8 +508,12 @@ function confirmPayment(){
 function closeWithoutPayment(){
   var t=getTable(currentTableId);
   if(t.items.length===0){showMessage("Il tavolo è già vuoto.");return;}
-  if(!t.clientId){showMessage("Associa prima un cliente, così il debito resta salvato.");return;}
+  if(hasUnassignedItems(t)){
+    showMessage("Ci sono articoli senza cliente: assegnali prima di chiudere il tavolo.");
+    return;
+  }
   t.items=[];
+  t.payments=[];
   saveState();
   renderTable();
 }
@@ -376,12 +521,14 @@ function closeWithoutPayment(){
 function showClients(){
   currentTableId=null;
   var html='<div class="card"><h2>Clienti</h2><button class="blue" onclick="newClientScreen()">+ Nuovo cliente</button></div>';
-  var i,c;
+  var i,c,open;
   for(i=0;i<state.clients.length;i++){
     c=state.clients[i];
+    open=clientOpenDue(c.id);
     html+='<div class="card"><h3>'+esc(c.name)+'</h3>';
     html+='<div>Totale consumi: <b>'+euro(clientSpent(c))+'</b></div>';
     html+='<div>Totale pagato: <b>'+euro(clientPaid(c))+'</b></div>';
+    if(open>0) html+='<div>Nei tavoli aperti: <b>'+euro(open)+'</b></div>';
     html+='<div class="total">Debito: '+euro(clientBalance(c))+'</div>';
     html+='<button class="blue" onclick="openClient(\''+esc(c.id)+'\')">Apri scheda</button></div>';
   }
@@ -412,12 +559,19 @@ function saveNewClient(){
 
 function openClient(cid){
   var c=getClient(cid);
+  var open=clientOpenDue(cid);
+  var oldDebt=clientOldDebt(c);
   var html='<button onclick="showClients()">← Clienti</button>';
   html+='<div class="card section"><h2>'+esc(c.name)+'</h2>';
   html+='<div>Totale consumi: <b>'+euro(clientSpent(c))+'</b></div>';
   html+='<div>Totale pagato: <b>'+euro(clientPaid(c))+'</b></div>';
-  html+='<div class="total">Debito: '+euro(clientBalance(c))+'</div>';
-  html+='<div class="small">Nuovo pagamento</div><div class="row"><input id="clientPay" inputmode="decimal" placeholder="0,00"><button class="green" onclick="clientPayment(\''+esc(c.id)+'\')">Registra</button></div>';
+  if(open>0) html+='<div>Conti ancora aperti ai tavoli: <b>'+euro(open)+'</b></div>';
+  html+='<div class="total">Debito totale: '+euro(clientBalance(c))+'</div>';
+  if(oldDebt>0){
+    html+='<div class="small">Pagamento debito precedente / fuori dai tavoli aperti (max '+euro(oldDebt)+')</div><div class="row"><input id="clientPay" inputmode="decimal" placeholder="0,00"><button class="green" onclick="clientPayment(\''+esc(c.id)+'\')">Registra</button></div>';
+  }else if(open>0){
+    html+='<div class="msg">Per pagare un conto ancora aperto, registra il pagamento direttamente dal tavolo.</div>';
+  }
   html+='<div class="section"><h3>Storico</h3>';
   var i,h;
   for(i=c.history.length-1;i>=0;i--){
@@ -432,8 +586,9 @@ function openClient(cid){
 function clientPayment(cid){
   var c=getClient(cid);
   var n=parseAmount(document.getElementById("clientPay").value);
+  var maxPay=clientOldDebt(c);
   if(!isFinite(n)||n<=0){showMessage("Inserisci un pagamento valido.");return;}
-  if(n>clientBalance(c)){showMessage("Il pagamento supera il debito.");return;}
+  if(n>maxPay+0.001){showMessage("Per i conti aperti registra il pagamento dal tavolo.");return;}
   addHistory(c,"pagamento",n,"Pagamento cliente",null);
   saveState();
   openClient(cid);
@@ -467,7 +622,7 @@ function showHistory(){
 function addTable(){
   var id=state.nextTableId;
   state.nextTableId++;
-  state.tables.push({id:id,name:"Tavolo "+id,clientId:null,items:[]});
+  state.tables.push({id:id,name:"Tavolo "+id,activeClientId:null,items:[],payments:[]});
   saveState();
   showTables();
 }
@@ -510,7 +665,7 @@ function restoreData(input){
     try{
       var x=JSON.parse(reader.result);
       if(!x || !x.tables || !x.clients) throw new Error("bad");
-      state=x;
+      state=migrateState(x);
       saveState();
       showTables();
       showMessage("Backup ripristinato.");
