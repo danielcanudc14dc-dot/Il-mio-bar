@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#111111">
+<title>Il mio Bar</title>
+<link rel="manifest" href="manifest.webmanifest">
+<style>
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,Arial,sans-serif;background:#f2f2f2;color:#111}
+header{background:#111;color:#fff;padding:14px;position:sticky;top:0;z-index:10}
+header h1{font-size:21px;margin:0}
+.topbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+button{font-size:16px;border:0;border-radius:10px;padding:12px 14px;background:#e4e4e7;color:#111;-webkit-appearance:none;cursor:pointer}
+button:disabled{opacity:.55}
+button.blue{background:#2563eb;color:#fff}
+button.green{background:#16a34a;color:#fff}
+button.red{background:#dc2626;color:#fff}
+button.orange{background:#f59e0b;color:#111}
+main{padding:12px;max-width:1000px;margin:auto}
+.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.card{background:#fff;border-radius:14px;padding:13px;margin-bottom:10px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.card h2,.card h3{margin-top:0}
+.total{font-size:27px;font-weight:bold;margin:8px 0}
+.small{font-size:13px;color:#666}
+input,select{font-size:17px;width:100%;padding:12px;border:1px solid #ccc;border-radius:10px;background:#fff;color:#111;-webkit-appearance:none;box-sizing:border-box}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.row input,.row select{flex:1;min-width:140px}
+.prices{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:10px}
+.prices button{background:#dbeafe;color:#1e3a8a;font-weight:bold}
+.item{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #eee;padding:10px 0;gap:8px}
+.item:last-child{border-bottom:0}
+.hidden{display:none!important}
+.section{margin-top:14px}
+.badge{display:inline-block;background:#eef2ff;color:#3730a3;border-radius:99px;padding:4px 8px;font-size:12px}
+.person{border:1px solid #e5e7eb;border-radius:12px;padding:12px;margin-top:10px;background:#fafafa}
+.personHead{display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}
+.activeClient{background:#ecfdf5;border:1px solid #bbf7d0;border-radius:10px;padding:10px;margin-top:10px}
+.warn{background:#fef2f2;color:#991b1b;border-radius:10px;padding:10px;margin-top:10px}
+.msg{background:#fff7ed;color:#9a3412;padding:10px;border-radius:10px;margin-top:10px}
+.ok{background:#ecfdf5;color:#166534;padding:10px;border-radius:10px;margin-top:10px}
+.cloud{display:inline-flex;align-items:center;gap:6px;background:#1f2937;border-radius:99px;padding:6px 9px;font-size:12px}
+.dot{width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td,th{border-bottom:1px solid #eee;padding:8px;text-align:left}
+.loginWrap{max-width:440px;margin:40px auto}
+.loginLogo{font-size:42px;text-align:center;margin-bottom:10px}
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid #ddd;border-top-color:#2563eb;border-radius:50%;animation:spin .8s linear infinite;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media(min-width:700px){.grid{grid-template-columns:repeat(4,1fr)}.prices{grid-template-columns:repeat(6,1fr)}}
+</style>
+</head>
+<body>
+<header id="mainHeader" class="hidden">
+  <h1>🍸 Il mio Bar</h1>
+  <div class="topbar">
+    <button class="blue" onclick="showTables()">Tavoli</button>
+    <button onclick="showClients()">Clienti</button>
+    <button onclick="showHistory()">Storico</button>
+    <button onclick="addTable()">+ Tavolo</button>
+    <button onclick="backupData()">Backup</button>
+    <button onclick="document.getElementById('restoreFile').click()">Ripristina</button>
+    <button onclick="logout()">Esci</button>
+    <span class="cloud"><span class="dot"></span><span id="cloudStatus">Cloud</span></span>
+    <input id="restoreFile" type="file" accept=".json,application/json" class="hidden" onchange="restoreData(this)">
+  </div>
+</header>
+
+<main id="app"></main>
+
+<script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore-compat.js"></script>
+
+<script>
+var firebaseConfig = {
+  apiKey: "AIzaSyBViY_90fVJiaUYIorWy8BWJyeIL6QubCY",
+  authDomain: "my-bar-719d9.firebaseapp.com",
+  projectId: "my-bar-719d9",
+  storageBucket: "my-bar-719d9.firebasestorage.app",
+  messagingSenderId: "749457673628",
+  appId: "1:749457673628:web:87b9ff136d51d88a5b0c59",
+  measurementId: "G-DQ3D2B1H8P"
+};
+
+var ALLOWED_UID = "kQcqTWjKqBb5l6f7cvfMs4W59yD2";
+var LEGACY_STORAGE_KEY = "IL_MIO_BAR_IPAD_SIMPLE_1";
+var BACKUP_FORMAT = "IL_MIO_BAR_CLOUD_V1";
+var HISTORY_PAGE_SIZE = 200;
+var prices = [0.1,0.2,0.3,1,1.2,1.5,1.8,2,2.5,2.7,3,3.5,4,4.5,5,6,7,8,10,12,15,20,25,30];
+
+firebase.initializeApp(firebaseConfig);
+var auth = firebase.auth();
+var db = firebase.firestore();
+
+try {
+  db.enablePersistence({synchronizeTabs:true}).catch(function(){});
+} catch(e) {}
+
+var state = {tables:[],clients:[],items:[],payments:[]};
+var currentView = "tables";
+var currentTableId = null;
+var currentClientId = null;
+var listeners = [];
+var readyFlags = {tables:false,clients:false,items:false,payments:false};
+var initialized = false;
+var historyDocs = [];
+var historyLastDoc = null;
+var historyHasMore = false;
+var historyLoading = false;
+
+function esc(v){
+  return String(v == null ? "" : v)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+function euro(n){
+  n=Number(n||0);
+  return "€ " + n.toFixed(2).replace(".",",");
+}
+function parseAmount(v){
+  if(v==null) return NaN;
+  return Number(String(v).replace(",",".").trim());
+}
+function nowIso(){ return new Date().toISOString(); }
+function same(a,b){ return String(a==null?"":a)===String(b==null?"":b); }
+function getTable(id){ return state.tables.find(function(x){return same(x.id,id);}) || null; }
+function getClient(id){ return state.clients.find(function(x){return same(x.id,id);}) || null; }
+function tableItems(tid){ return state.items.filter(function(x){return same(x.tableId,tid);}); }
+function tablePayments(tid){ return state.payments.filter(function(x){return same(x.tableId,tid);}); }
+function clientTableGross(tid,cid){
+  return tableItems(tid).filter(function(x){return same(x.clientId,cid);})
+    .reduce(function(s,x){return s+Number(x.amount||0);},0);
+}
+function clientTablePaid(tid,cid){
+  return tablePayments(tid).filter(function(x){return same(x.clientId,cid);})
+    .reduce(function(s,x){return s+Number(x.amount||0);},0);
+}
+function clientTableDue(tid,cid){
+  var v=clientTableGross(tid,cid)-clientTablePaid(tid,cid);
+  return v<0.001?0:v;
+}
+function getTableClientIds(tid){
+  var out=[];
+  tableItems(tid).forEach(function(x){
+    var id=x.clientId||"";
+    if(!out.some(function(y){return same(y,id);})) out.push(id);
+  });
+  return out;
+}
+function tableTotal(tid){
+  return getTableClientIds(tid).reduce(function(s,cid){return s+clientTableDue(tid,cid);},0);
+}
+function clientSpent(c){ return Number(c&&c.spentTotal||0); }
+function clientPaid(c){ return Number(c&&c.paidTotal||0); }
+function clientBalance(c){ var v=Number(c&&c.balance||0); return v<0?0:v; }
+function clientOpenDue(cid){
+  return state.tables.reduce(function(s,t){return s+clientTableDue(t.id,cid);},0);
+}
+function clientOldDebt(c){
+  var v=clientBalance(c)-clientOpenDue(c.id);
+  return v<0?0:v;
+}
+function setCloudStatus(text,ok){
+  var el=document.getElementById("cloudStatus");
+  if(el) el.textContent=text;
+  var dot=document.querySelector(".dot");
+  if(dot) dot.style.background=ok===false?"#f59e0b":"#22c55e";
+}
+function showMessage(text,kind){
+  var old=document.getElementById("messageBox");
+  if(old && old.parentNode) old.parentNode.removeChild(old);
+  var app=document.getElementById("app");
+  if(!app) return;
+  var d=document.createElement("div");
+  d.id="messageBox";
+  d.className=kind==="ok"?"ok":"msg";
+  d.textContent=text;
+  app.insertBefore(d,app.firstChild);
+  setTimeout(function(){
+    var x=document.getElementById("messageBox");
+    if(x&&x.parentNode)x.parentNode.removeChild(x);
+  },3500);
+}
+function friendlyError(e){
+  var code=e&&e.code?e.code:"";
+  if(code.indexOf("wrong-password")>=0 || code.indexOf("invalid-credential")>=0) return "Email o password non corretti.";
+  if(code.indexOf("user-not-found")>=0) return "Utente non trovato.";
+  if(code.indexOf("too-many-requests")>=0) return "Troppi tentativi. Riprova tra poco.";
+  if(code.indexOf("network-request-failed")>=0) return "Connessione assente o instabile.";
+  if(code.indexOf("permission-denied")>=0) return "Accesso al cloud non autorizzato.";
+  return (e&&e.message)?e.message:"Si è verificato un errore.";
+}
+
+function showLogin(message){
+  document.getElementById("mainHeader").classList.add("hidden");
+  var html='<div class="loginWrap"><div class="loginLogo">🍸</div><div class="card">';
+  html+='<h2>Il mio Bar</h2><div class="small">Accedi con l’account del bar. Non serve collegare un account Google al telefono.</div>';
+  if(message) html+='<div class="msg">'+esc(message)+'</div>';
+  html+='<div class="section"><div class="small">Email</div><input id="loginEmail" type="email" autocomplete="username" value="datibar@gmail.com"></div>';
+  html+='<div class="section"><div class="small">Password</div><input id="loginPassword" type="password" autocomplete="current-password" placeholder="Password del bar"></div>';
+  html+='<div class="section"><button class="blue" style="width:100%" onclick="login()">Entra</button></div>';
+  html+='<div class="small section">Dopo il primo accesso, Firebase può mantenere la sessione su questo dispositivo.</div>';
+  html+='</div></div>';
+  document.getElementById("app").innerHTML=html;
+}
+async function login(){
+  var email=(document.getElementById("loginEmail").value||"").trim();
+  var password=document.getElementById("loginPassword").value||"";
+  if(!email||!password){showMessage("Inserisci email e password.");return;}
+  try{
+    setCloudStatus("Accesso…");
+    await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+    await auth.signInWithEmailAndPassword(email,password);
+  }catch(e){
+    showLogin(friendlyError(e));
+  }
+}
+function logout(){ auth.signOut(); }
+
+auth.onAuthStateChanged(async function(user){
+  stopRealtime();
+  initialized=false;
+  if(!user){ showLogin(""); return; }
+  if(user.uid!==ALLOWED_UID){
+    await auth.signOut();
+    showLogin("Questo account non è autorizzato per Il mio Bar.");
+    return;
+  }
+  document.getElementById("mainHeader").classList.remove("hidden");
+  document.getElementById("app").innerHTML='<div class="card"><span class="spinner"></span> Collegamento al cloud…</div>';
+  try{
+    await prepareCloud();
+  }catch(e){
+    document.getElementById("app").innerHTML='<div class="card"><div class="warn">'+esc(friendlyError(e))+'</div><div class="section"><button onclick="location.reload()">Riprova</button></div></div>';
+  }
+});
+
+function legacyState(){
+  try{
+    var raw=localStorage.getItem(LEGACY_STORAGE_KEY);
+    if(!raw)return null;
+    var x=JSON.parse(raw);
+    if(x&&Array.isArray(x.tables)&&Array.isArray(x.clients))return x;
+  }catch(e){}
+  return null;
+}
+function legacyHasRealData(x){
+  if(!x)return false;
+  if((x.clients||[]).length>0)return true;
+  if((x.tables||[]).length>13)return true;
+  return (x.tables||[]).some(function(t,i){
+    if((t.items||[]).length || (t.payments||[]).length)return true;
+    return t.name && t.name!==("Tavolo "+(i+1));
+  });
+}
+async function prepareCloud(){
+  setCloudStatus("Connessione…");
+  var first=await db.collection("tables").limit(1).get();
+  if(first.empty){
+    var old=legacyState();
+    if(legacyHasRealData(old)){
+      showMigrationChoice(old);
+      return;
+    }
+    await createDefaultCloud();
+  }
+  startRealtime();
+}
+function showMigrationChoice(old){
+  currentView="migration";
+  var html='<div class="card"><h2>Dati trovati su questo dispositivo</h2>';
+  html+='<div>Ho trovato dati della versione precedente salvati nel browser.</div>';
+  html+='<div class="section"><b>Consigliato:</b> importarli ora nel cloud, così non perdi clienti, tavoli e storico.</div>';
+  html+='<div class="row section"><button class="green" onclick="importLegacyFromDevice()">Importa nel cloud</button><button onclick="startFreshCloud()">Inizia vuoto</button></div>';
+  html+='</div>';
+  document.getElementById("app").innerHTML=html;
+}
+async function importLegacyFromDevice(){
+  var old=legacyState();
+  if(!old){showMessage("Non trovo più i dati locali.");return;}
+  document.getElementById("app").innerHTML='<div class="card"><span class="spinner"></span> Importazione nel cloud…</div>';
+  try{
+    await migrateLegacy(old);
+    localStorage.setItem("IL_MIO_BAR_CLOUD_MIGRATED","1");
+    startRealtime();
+  }catch(e){
+    document.getElementById("app").innerHTML='<div class="card"><div class="warn">Importazione non riuscita: '+esc(friendlyError(e))+'</div></div>';
+  }
+}
+async function startFreshCloud(){
+  document.getElementById("app").innerHTML='<div class="card"><span class="spinner"></span> Preparazione del cloud…</div>';
+  try{await createDefaultCloud();startRealtime();}catch(e){showMessage(friendlyError(e));}
+}
+async function createDefaultCloud(){
+  var batch=db.batch();
+  for(var i=1;i<=13;i++){
+    batch.set(db.collection("tables").doc(String(i)),{id:i,name:"Tavolo "+i,activeClientId:null});
+  }
+  batch.set(db.collection("meta").doc("app"),{nextTableId:14,version:1});
+  await batch.commit();
+}
+async function commitOps(ops){
+  var chunk=350;
+  for(var i=0;i<ops.length;i+=chunk){
+    var batch=db.batch();
+    ops.slice(i,i+chunk).forEach(function(op){
+      var ref=db.collection(op.col).doc(op.id);
+      if(op.type==="delete")batch.delete(ref);
+      else batch.set(ref,op.data,op.merge?{merge:true}:undefined);
+    });
+    await batch.commit();
+  }
+}
+function findHistoryForItem(client,itemId){
+  if(!client||!Array.isArray(client.history))return null;
+  for(var i=0;i<client.history.length;i++){
+    if(client.history[i].sourceItemId===itemId)return client.history[i];
+  }
+  return null;
+}
+async function migrateLegacy(old){
+  var ops=[];
+  var maxTable=0;
+  (old.clients||[]).forEach(function(c){
+    var spent=0,paid=0;
+    (c.history||[]).forEach(function(h){
+      if(h.type==="consumo"||h.type==="debito")spent+=Number(h.amount||0);
+      if(h.type==="pagamento")paid+=Number(h.amount||0);
+      var mid=h.id||db.collection("movements").doc().id;
+      ops.push({col:"movements",id:mid,data:{
+        id:mid,clientId:String(c.id),type:h.type||"consumo",amount:Number(h.amount||0),
+        label:h.label||"Movimento",date:h.date||nowIso(),sourceItemId:h.sourceItemId||null,tableId:null
+      }});
+    });
+    ops.push({col:"clients",id:String(c.id),data:{
+      id:String(c.id),name:c.name||"Cliente",spentTotal:spent,paidTotal:paid,balance:Math.max(0,spent-paid),createdAt:nowIso()
+    }});
+  });
+  (old.tables||[]).forEach(function(t){
+    maxTable=Math.max(maxTable,Number(t.id)||0);
+    ops.push({col:"tables",id:String(t.id),data:{id:Number(t.id),name:t.name||("Tavolo "+t.id),activeClientId:t.activeClientId||null}});
+    (t.items||[]).forEach(function(item){
+      var c=item.clientId?((old.clients||[]).find(function(x){return same(x.id,item.clientId);})||null):null;
+      var h=findHistoryForItem(c,item.id);
+      ops.push({col:"openItems",id:String(item.id),data:{
+        id:String(item.id),tableId:Number(t.id),clientId:item.clientId||null,amount:Number(item.amount||0),
+        date:item.date||nowIso(),movementId:h?(h.id||null):null
+      }});
+    });
+    (t.payments||[]).forEach(function(p){
+      var pid=p.id||db.collection("openPayments").doc().id;
+      ops.push({col:"openPayments",id:String(pid),data:{
+        id:String(pid),tableId:Number(t.id),clientId:p.clientId||null,
+        amount:Number(p.amount||0),date:p.date||nowIso()
+      }});
+    });
+  });
+  var next=Math.max(Number(old.nextTableId||0),maxTable+1,14);
+  ops.push({col:"meta",id:"app",data:{nextTableId:next,version:1}});
+  await commitOps(ops);
+}
+function stopRealtime(){
+  listeners.forEach(function(u){try{u();}catch(e){}});
+  listeners=[];
+  readyFlags={tables:false,clients:false,items:false,payments:false};
+}
+function allReady(){return readyFlags.tables&&readyFlags.clients&&readyFlags.items&&readyFlags.payments;}
+function markReady(k){readyFlags[k]=true;if(allReady()&&!initialized){initialized=true;currentView="tables";showTables();setCloudStatus("Sincronizzato",true);}else if(allReady()&&initialized){renderCurrent();}}
+function startRealtime(){
+  stopRealtime();
+  setCloudStatus("Sincronizzazione…");
+  listeners.push(db.collection("tables").onSnapshot(function(s){
+    state.tables=s.docs.map(function(d){var x=d.data();x._id=d.id;return x;})
+      .sort(function(a,b){return Number(a.id)-Number(b.id);});
+    markReady("tables");
+  },cloudError));
+  listeners.push(db.collection("clients").onSnapshot(function(s){
+    state.clients=s.docs.map(function(d){var x=d.data();x._id=d.id;return x;})
+      .sort(function(a,b){return String(a.name||"").localeCompare(String(b.name||""),"it");});
+    markReady("clients");
+  },cloudError));
+  listeners.push(db.collection("openItems").onSnapshot(function(s){
+    state.items=s.docs.map(function(d){var x=d.data();x._id=d.id;if(!x.id)x.id=d.id;return x;});
+    markReady("items");
+  },cloudError));
+  listeners.push(db.collection("openPayments").onSnapshot(function(s){
+    state.payments=s.docs.map(function(d){var x=d.data();x._id=d.id;if(!x.id)x.id=d.id;return x;});
+    markReady("payments");
+  },cloudError));
+}
+function cloudError(e){setCloudStatus("Errore cloud",false);showMessage(friendlyError(e));}
+function renderCurrent(){
+  if(!initialized)return;
+  if(currentView==="tables")renderTables();
+  else if(currentView==="table")renderTable();
+  else if(currentView==="clients")renderClients();
+  else if(currentView==="client")renderClientShell();
+}
+
+function tableSummaryHtml(tid){
+  var parts=[];
+  getTableClientIds(tid).forEach(function(cid){
+    var due=clientTableDue(tid,cid);
+    if(due<=0)return;
+    var c=cid?getClient(cid):null;
+    parts.push((c?esc(c.name):"Senza cliente")+": <b>"+euro(due)+"</b>");
+  });
+  return parts.length?parts.join("<br>"):"Nessun conto aperto";
+}
+function showTables(){currentView="tables";currentTableId=null;renderTables();}
+function renderTables(){
+  var html='<div class="grid">';
+  state.tables.forEach(function(t){
+    var count=tableItems(t.id).length;
+    html+='<div class="card"><div class="row" style="justify-content:space-between"><h3 style="margin:0">'+esc(t.name)+'</h3><span class="badge">'+count+' articoli</span></div>';
+    html+='<div class="total">'+euro(tableTotal(t.id))+'</div><div class="small">'+tableSummaryHtml(t.id)+'</div>';
+    html+='<div class="section"><button class="blue" onclick="openTable('+Number(t.id)+')">Apri tavolo</button></div></div>';
+  });
+  html+='</div>';
+  document.getElementById("app").innerHTML=html;
+}
+function openTable(id){currentTableId=id;currentView="table";renderTable();}
+function hasUnassignedItems(tid){return tableItems(tid).some(function(x){return !x.clientId;});}
+function renderTable(){
+  var t=getTable(currentTableId);
+  if(!t){showTables();return;}
+  var active=t.activeClientId?getClient(t.activeClientId):null;
+  var html='<button onclick="showTables()">← Indietro</button><div class="card section"><h2>'+esc(t.name)+'</h2>';
+  html+='<div class="small">Rinomina tavolo</div><div class="row"><input id="tableName" value="'+esc(t.name)+'"><button class="green" onclick="renameTable()">Salva nome</button></div>';
+  html+='<div class="section"><div class="small">Cliente per i prossimi prezzi / prossimo giro</div><select id="clientSelect" onchange="selectClientForTable()"><option value="">Seleziona cliente…</option>';
+  state.clients.forEach(function(c){html+='<option value="'+esc(c.id)+'"'+(same(c.id,t.activeClientId)?' selected':'')+'>'+esc(c.name)+'</option>';});
+  html+='</select><div class="section"><button onclick="newClientForTable()">+ Nuovo cliente</button></div>';
+  if(active){
+    html+='<div class="activeClient">Cliente attivo: <b>'+esc(active.name)+'</b> · Debito totale: <b>'+euro(clientBalance(active))+'</b><br><span class="small">I prezzi premuti ora verranno assegnati a '+esc(active.name)+'.</span></div>';
+  }else html+='<div class="msg">Seleziona prima il cliente, poi premi i prezzi.</div>';
+  if(hasUnassignedItems(t.id)&&active)html+='<div class="section"><button class="orange" onclick="assignUnassignedItems()">Assegna articoli senza cliente a '+esc(active.name)+'</button></div>';
+  html+='</div>';
+  html+='<div class="section"><div class="small">Aggiungi prezzo</div><div class="prices">';
+  prices.forEach(function(p){html+='<button onclick="addPrice('+p+')">'+euro(p)+'</button>';});
+  html+='</div></div><div class="section"><div class="row"><input id="customPrice" inputmode="decimal" placeholder="Altro importo, es. 4,50"><button class="blue" onclick="addCustomPrice()">Aggiungi</button></div></div>';
+  html+='<div class="section"><h3>Conto per persona</h3>';
+  var ids=getTableClientIds(t.id);
+  if(tableItems(t.id).length===0)html+='<div class="small">Nessun articolo.</div>';
+  ids.forEach(function(cid){
+    var c=cid?getClient(cid):null,gross=clientTableGross(t.id,cid),paid=clientTablePaid(t.id,cid),due=clientTableDue(t.id,cid);
+    html+='<div class="person"><div class="personHead"><h3 style="margin:0">'+(c?esc(c.name):'Senza cliente')+'</h3><b>'+euro(due)+'</b></div>';
+    if(paid>0)html+='<div class="small">Consumazioni '+euro(gross)+' · già pagato '+euro(paid)+' · da pagare '+euro(due)+'</div>';
+    tableItems(t.id).filter(function(x){return same(x.clientId,cid);}).forEach(function(item){
+      html+='<div class="item"><b>'+euro(item.amount)+'</b><button class="red" onclick="deleteItem(\''+esc(item.id)+'\')">Elimina</button></div>';
+    });
+    if(c&&due>0)html+='<div class="row section"><button class="green" onclick="showPaymentBox(\''+esc(c.id)+'\')">Pagamento</button><button class="orange" onclick="closeClientWithoutPayment(\''+esc(c.id)+'\')">Lascia a debito</button></div>';
+    if(!c)html+='<div class="warn">Questi articoli non hanno ancora un cliente. Seleziona un cliente sopra e assegnali prima di chiudere.</div>';
+    html+='</div>';
+  });
+  html+='</div><div class="total">Totale tavolo da pagare: '+euro(tableTotal(t.id))+'</div>';
+  html+='<div class="row"><button class="orange" onclick="closeWithoutPayment()">Chiudi tutto a debito</button></div><div id="paymentBox" class="section hidden"></div></div>';
+  document.getElementById("app").innerHTML=html;
+}
+async function renameTable(){
+  var t=getTable(currentTableId),v=(document.getElementById("tableName").value||"").trim();
+  if(!v){showMessage("Scrivi un nome.");return;}
+  try{await db.collection("tables").doc(String(t._id||t.id)).update({name:v});}catch(e){showMessage(friendlyError(e));}
+}
+async function selectClientForTable(){
+  var t=getTable(currentTableId),cid=document.getElementById("clientSelect").value||null;
+  try{await db.collection("tables").doc(String(t._id||t.id)).update({activeClientId:cid});}catch(e){showMessage(friendlyError(e));}
+}
+async function addPrice(n){
+  var t=getTable(currentTableId),c=t&&t.activeClientId?getClient(t.activeClientId):null;
+  if(!c){showMessage("Seleziona prima il cliente del giro.");return;}
+  n=Number(n); if(!isFinite(n)||n<=0)return;
+  var ref=db.collection("openItems").doc(),id=ref.id,date=nowIso();
+  var batch=db.batch();
+  batch.set(ref,{id:id,tableId:Number(t.id),clientId:String(c.id),amount:n,date:date,movementId:id});
+  batch.set(db.collection("movements").doc(id),{id:id,clientId:String(c.id),type:"consumo",amount:n,label:"Consumo - "+t.name,date:date,sourceItemId:id,tableId:Number(t.id)});
+  batch.update(db.collection("clients").doc(String(c._id||c.id)),{
+    spentTotal:firebase.firestore.FieldValue.increment(n),
+    balance:firebase.firestore.FieldValue.increment(n)
+  });
+  try{await batch.commit();}catch(e){showMessage(friendlyError(e));}
+}
+function addCustomPrice(){
+  var n=parseAmount(document.getElementById("customPrice").value);
+  if(!isFinite(n)||n<=0){showMessage("Inserisci un importo valido.");return;}
+  addPrice(n);
+}
+async function assignUnassignedItems(){
+  var t=getTable(currentTableId),c=t&&t.activeClientId?getClient(t.activeClientId):null;
+  if(!c){showMessage("Seleziona prima un cliente.");return;}
+  var list=tableItems(t.id).filter(function(x){return !x.clientId;});
+  if(!list.length)return;
+  var total=0,batch=db.batch(),date=nowIso();
+  list.forEach(function(item){
+    var mid=item.movementId||item.id;
+    total+=Number(item.amount||0);
+    batch.update(db.collection("openItems").doc(String(item._id||item.id)),{clientId:String(c.id),movementId:mid});
+    if(!item.movementId){
+      batch.set(db.collection("movements").doc(mid),{id:mid,clientId:String(c.id),type:"consumo",amount:Number(item.amount||0),label:"Consumo - "+t.name,date:item.date||date,sourceItemId:item.id,tableId:Number(t.id)});
+    }
+  });
+  if(total>0)batch.update(db.collection("clients").doc(String(c._id||c.id)),{
+    spentTotal:firebase.firestore.FieldValue.increment(total),
+    balance:firebase.firestore.FieldValue.increment(total)
+  });
+  try{await batch.commit();}catch(e){showMessage(friendlyError(e));}
+}
+async function deleteItem(itemId){
+  var item=state.items.find(function(x){return same(x.id,itemId);});
+  if(!item)return;
+  var grossAfter=clientTableGross(item.tableId,item.clientId)-Number(item.amount||0);
+  var alreadyPaid=clientTablePaid(item.tableId,item.clientId);
+  if(alreadyPaid>grossAfter+0.001){showMessage("Non puoi eliminare questo articolo: una parte del conto è già stata pagata.");return;}
+  var batch=db.batch();
+  batch.delete(db.collection("openItems").doc(String(item._id||item.id)));
+  if(item.clientId){
+    var c=getClient(item.clientId);
+    if(c){
+      batch.update(db.collection("clients").doc(String(c._id||c.id)),{
+        spentTotal:firebase.firestore.FieldValue.increment(-Number(item.amount||0)),
+        balance:firebase.firestore.FieldValue.increment(-Number(item.amount||0))
+      });
+    }
+  }
+  if(item.movementId)batch.delete(db.collection("movements").doc(String(item.movementId)));
+  try{await batch.commit();}catch(e){showMessage(friendlyError(e));}
+}
+function newClientForTable(){
+  currentView="newClientTable";
+  var html='<div class="card"><h3>Nuovo cliente</h3><div class="small">Nome e cognome</div><input id="newName" placeholder="Mario Rossi">';
+  html+='<div class="small section">Debito iniziale</div><input id="newDebt" inputmode="decimal" placeholder="0,00">';
+  html+='<div class="row section"><button class="green" onclick="saveNewClientForTable()">Salva e usa cliente</button><button onclick="currentView=\'table\';renderTable()">Annulla</button></div></div>';
+  document.getElementById("app").innerHTML=html;
+}
+async function createClient(name,debt){
+  var ref=db.collection("clients").doc(),id=ref.id,date=nowIso(),batch=db.batch();
+  batch.set(ref,{id:id,name:name,spentTotal:debt,paidTotal:0,balance:debt,createdAt:date});
+  if(debt>0){
+    var m=db.collection("movements").doc();
+    batch.set(m,{id:m.id,clientId:id,type:"debito",amount:debt,label:"Debito iniziale",date:date,sourceItemId:null,tableId:null});
+  }
+  await batch.commit();
+  return id;
+}
+async function saveNewClientForTable(){
+  var name=(document.getElementById("newName").value||"").trim(),debt=parseAmount(document.getElementById("newDebt").value||"0");
+  if(!name){showMessage("Scrivi il nome del cliente.");return;}
+  if(!isFinite(debt)||debt<0){showMessage("Debito iniziale non valido.");return;}
+  try{
+    var cid=await createClient(name,debt);
+    var t=getTable(currentTableId);
+    await db.collection("tables").doc(String(t._id||t.id)).update({activeClientId:cid});
+    currentView="table";
+  }catch(e){showMessage(friendlyError(e));}
+}
+function showPaymentBox(cid){
+  var t=getTable(currentTableId),c=getClient(cid),due=clientTableDue(t.id,cid);
+  if(!c||due<=0){showMessage("Niente da pagare.");return;}
+  var box=document.getElementById("paymentBox");box.className="section";
+  box.innerHTML='<div class="card"><h3>Pagamento - '+esc(c.name)+'</h3><div class="small">Da pagare sul tavolo: '+euro(due)+'</div><div class="row"><input id="payAmount" inputmode="decimal" value="'+due.toFixed(2)+'"><button class="green" onclick="confirmPayment(\''+esc(c.id)+'\')">Registra</button><button onclick="hidePaymentBox()">Annulla</button></div></div>';
+  box.scrollIntoView({behavior:"smooth",block:"nearest"});
+}
+function hidePaymentBox(){var b=document.getElementById("paymentBox");if(b){b.className="section hidden";b.innerHTML="";}}
+async function confirmPayment(cid){
+  var t=getTable(currentTableId),c=getClient(cid),due=clientTableDue(t.id,cid),n=parseAmount(document.getElementById("payAmount").value);
+  if(!c){showMessage("Cliente non trovato.");return;}
+  if(!isFinite(n)||n<=0){showMessage("Inserisci un pagamento valido.");return;}
+  if(n>due+0.001){showMessage("Il pagamento non può superare il totale sul tavolo.");return;}
+  var full=(due-n<0.001),date=nowIso(),pid=db.collection("openPayments").doc().id,batch=db.batch();
+  batch.set(db.collection("movements").doc(pid),{id:pid,clientId:String(c.id),type:"pagamento",amount:n,label:"Pagamento - "+t.name,date:date,sourceItemId:null,tableId:Number(t.id)});
+  batch.update(db.collection("clients").doc(String(c._id||c.id)),{
+    paidTotal:firebase.firestore.FieldValue.increment(n),
+    balance:firebase.firestore.FieldValue.increment(-n)
+  });
+  if(full){
+    tableItems(t.id).filter(function(x){return same(x.clientId,cid);}).forEach(function(x){batch.delete(db.collection("openItems").doc(String(x._id||x.id)));});
+    tablePayments(t.id).filter(function(x){return same(x.clientId,cid);}).forEach(function(x){batch.delete(db.collection("openPayments").doc(String(x._id||x.id)));});
+  }else{
+    batch.set(db.collection("openPayments").doc(pid),{id:pid,tableId:Number(t.id),clientId:String(c.id),amount:n,date:date});
+  }
+  try{await batch.commit();}catch(e){showMessage(friendlyError(e));}
+}
+async function closeClientWithoutPayment(cid){
+  var t=getTable(currentTableId),c=getClient(cid);
+  if(!c||clientTableDue(t.id,cid)<=0){showMessage("Questo cliente non ha un conto aperto.");return;}
+  var batch=db.batch();
+  tableItems(t.id).filter(function(x){return same(x.clientId,cid);}).forEach(function(x){batch.delete(db.collection("openItems").doc(String(x._id||x.id)));});
+  tablePayments(t.id).filter(function(x){return same(x.clientId,cid);}).forEach(function(x){batch.delete(db.collection("openPayments").doc(String(x._id||x.id)));});
+  try{await batch.commit();}catch(e){showMessage(friendlyError(e));}
+}
+async function closeWithoutPayment(){
+  var t=getTable(currentTableId);
+  if(tableItems(t.id).length===0){showMessage("Il tavolo è già vuoto.");return;}
+  if(hasUnassignedItems(t.id)){showMessage("Ci sono articoli senza cliente: assegnali prima.");return;}
+  var batch=db.batch();
+  tableItems(t.id).forEach(function(x){batch.delete(db.collection("openItems").doc(String(x._id||x.id)));});
+  tablePayments(t.id).forEach(function(x){batch.delete(db.collection("openPayments").doc(String(x._id||x.id)));});
+  try{await batch.commit();}catch(e){showMessage(friendlyError(e));}
+}
+
+function showClients(){currentView="clients";currentClientId=null;renderClients();}
+function renderClients(){
+  var html='<div class="card"><h2>Clienti</h2><button class="blue" onclick="newClientScreen()">+ Nuovo cliente</button></div>';
+  state.clients.forEach(function(c){
+    var open=clientOpenDue(c.id);
+    html+='<div class="card"><h3>'+esc(c.name)+'</h3><div>Totale consumi: <b>'+euro(clientSpent(c))+'</b></div><div>Totale pagato: <b>'+euro(clientPaid(c))+'</b></div>';
+    if(open>0)html+='<div>Nei tavoli aperti: <b>'+euro(open)+'</b></div>';
+    html+='<div class="total">Debito: '+euro(clientBalance(c))+'</div><button class="blue" onclick="openClient(\''+esc(c.id)+'\')">Apri scheda</button></div>';
+  });
+  if(!state.clients.length)html+='<div class="card small">Nessun cliente.</div>';
+  document.getElementById("app").innerHTML=html;
+}
+function newClientScreen(){
+  currentView="newClient";
+  var html='<div class="card"><h2>Nuovo cliente</h2><div class="small">Nome e cognome</div><input id="newName" placeholder="Mario Rossi">';
+  html+='<div class="small section">Debito iniziale</div><input id="newDebt" inputmode="decimal" placeholder="0,00"><div class="row section"><button class="green" onclick="saveNewClient()">Salva</button><button onclick="showClients()">Annulla</button></div></div>';
+  document.getElementById("app").innerHTML=html;
+}
+async function saveNewClient(){
+  var name=(document.getElementById("newName").value||"").trim(),debt=parseAmount(document.getElementById("newDebt").value||"0");
+  if(!name){showMessage("Scrivi il nome del cliente.");return;}
+  if(!isFinite(debt)||debt<0){showMessage("Debito iniziale non valido.");return;}
+  try{await createClient(name,debt);showClients();}catch(e){showMessage(friendlyError(e));}
+}
+function openClient(cid){
+  currentClientId=cid;currentView="client";renderClientShell();loadClientHistory(cid);
+}
+function renderClientShell(){
+  var c=getClient(currentClientId);if(!c){showClients();return;}
+  var open=clientOpenDue(c.id),oldDebt=clientOldDebt(c);
+  var html='<button onclick="showClients()">← Clienti</button><div class="card section"><h2>'+esc(c.name)+'</h2>';
+  html+='<div>Totale consumi: <b>'+euro(clientSpent(c))+'</b></div><div>Totale pagato: <b>'+euro(clientPaid(c))+'</b></div>';
+  if(open>0)html+='<div>Conti ancora aperti ai tavoli: <b>'+euro(open)+'</b></div>';
+  html+='<div class="total">Debito totale: '+euro(clientBalance(c))+'</div>';
+  if(oldDebt>0)html+='<div class="small">Pagamento debito precedente / fuori dai tavoli aperti (max '+euro(oldDebt)+')</div><div class="row"><input id="clientPay" inputmode="decimal" placeholder="0,00"><button class="green" onclick="clientPayment(\''+esc(c.id)+'\')">Registra</button></div>';
+  else if(open>0)html+='<div class="msg">Per pagare un conto ancora aperto, registra il pagamento direttamente dal tavolo.</div>';
+  html+='<div class="section"><h3>Storico</h3><div id="clientHistory"><span class="spinner"></span> Caricamento…</div></div></div>';
+  document.getElementById("app").innerHTML=html;
+}
+async function loadClientHistory(cid){
+  try{
+    var snap=await db.collection("movements").where("clientId","==",String(cid)).get();
+    if(currentView!=="client"||!same(currentClientId,cid))return;
+    var rows=snap.docs.map(function(d){return d.data();}).sort(function(a,b){return String(b.date||"").localeCompare(String(a.date||""));});
+    var el=document.getElementById("clientHistory");if(!el)return;
+    if(!rows.length){el.innerHTML='<div class="small">Nessun movimento.</div>';return;}
+    var html="";
+    rows.forEach(function(h){
+      html+='<div class="item"><div><b>'+esc(h.label)+'</b><div class="small">'+new Date(h.date).toLocaleString("it-IT")+'</div></div><b>'+(h.type==="pagamento"?"−":"+")+euro(h.amount)+'</b></div>';
+    });
+    el.innerHTML=html;
+  }catch(e){var el=document.getElementById("clientHistory");if(el)el.innerHTML='<div class="warn">'+esc(friendlyError(e))+'</div>';}
+}
+async function clientPayment(cid){
+  var c=getClient(cid),n=parseAmount(document.getElementById("clientPay").value),maxPay=clientOldDebt(c);
+  if(!isFinite(n)||n<=0){showMessage("Inserisci un pagamento valido.");return;}
+  if(n>maxPay+0.001){showMessage("Per i conti aperti registra il pagamento dal tavolo.");return;}
+  var id=db.collection("movements").doc().id,date=nowIso(),batch=db.batch();
+  batch.set(db.collection("movements").doc(id),{id:id,clientId:String(c.id),type:"pagamento",amount:n,label:"Pagamento cliente",date:date,sourceItemId:null,tableId:null});
+  batch.update(db.collection("clients").doc(String(c._id||c.id)),{
+    paidTotal:firebase.firestore.FieldValue.increment(n),balance:firebase.firestore.FieldValue.increment(-n)
+  });
+  try{await batch.commit();loadClientHistory(cid);}catch(e){showMessage(friendlyError(e));}
+}
+
+function showHistory(){
+  currentView="history";historyDocs=[];historyLastDoc=null;historyHasMore=false;renderHistory();loadMoreHistory(true);
+}
+function renderHistory(){
+  var html='<div class="card"><h2>Storico generale</h2><div class="small">Lo storico resta nel cloud. Qui viene caricato a blocchi per mantenere l’app veloce.</div><div id="historyRows" class="section">';
+  if(historyLoading)html+='<span class="spinner"></span> Caricamento…';
+  else if(!historyDocs.length)html+='<div class="small">Nessun movimento.</div>';
+  else historyDocs.forEach(function(x){
+    var h=x.data,c=getClient(h.clientId);
+    html+='<div class="item"><div><b>'+esc(c?c.name:"Cliente")+'</b><div>'+esc(h.label)+'</div><div class="small">'+new Date(h.date).toLocaleString("it-IT")+'</div></div><b>'+(h.type==="pagamento"?"−":"+")+euro(h.amount)+'</b></div>';
+  });
+  html+='</div>';
+  if(historyHasMore)html+='<div class="section"><button class="blue" onclick="loadMoreHistory(false)">Carica altri '+HISTORY_PAGE_SIZE+'</button></div>';
+  html+='</div>';
+  document.getElementById("app").innerHTML=html;
+}
+async function loadMoreHistory(first){
+  if(historyLoading)return;
+  historyLoading=true;if(currentView==="history")renderHistory();
+  try{
+    var q=db.collection("movements").orderBy("date","desc").limit(HISTORY_PAGE_SIZE);
+    if(!first&&historyLastDoc)q=q.startAfter(historyLastDoc);
+    var snap=await q.get();
+    snap.docs.forEach(function(d){historyDocs.push({id:d.id,data:d.data()});});
+    historyLastDoc=snap.docs.length?snap.docs[snap.docs.length-1]:historyLastDoc;
+    historyHasMore=snap.docs.length===HISTORY_PAGE_SIZE;
+  }catch(e){showMessage(friendlyError(e));}
+  historyLoading=false;if(currentView==="history")renderHistory();
+}
+
+async function addTable(){
+  try{
+    await db.runTransaction(async function(tx){
+      var metaRef=db.collection("meta").doc("app"),snap=await tx.get(metaRef),next;
+      if(snap.exists)next=Number(snap.data().nextTableId||14);
+      else next=Math.max.apply(null,state.tables.map(function(t){return Number(t.id)||0;}).concat([13]))+1;
+      tx.set(db.collection("tables").doc(String(next)),{id:next,name:"Tavolo "+next,activeClientId:null});
+      tx.set(metaRef,{nextTableId:next+1,version:1},{merge:true});
+    });
+  }catch(e){showMessage(friendlyError(e));}
+}
+
+async function exportCollection(name){
+  var all=[],last=null;
+  while(true){
+    var q=db.collection(name).orderBy(firebase.firestore.FieldPath.documentId()).limit(400);
+    if(last)q=q.startAfter(last);
+    var snap=await q.get();
+    snap.docs.forEach(function(d){all.push({id:d.id,data:d.data()});});
+    if(snap.docs.length<400)break;
+    last=snap.docs[snap.docs.length-1];
+  }
+  return all;
+}
+async function backupData(){
+  if(!confirm("Creare un backup completo del cloud? Se lo storico è molto grande può richiedere un po’ di tempo."))return;
+  setCloudStatus("Backup…",false);
+  try{
+    var out={format:BACKUP_FORMAT,createdAt:nowIso(),collections:{}};
+    var names=["meta","tables","clients","openItems","openPayments","movements"];
+    for(var i=0;i<names.length;i++)out.collections[names[i]]=await exportCollection(names[i]);
+    var blob=new Blob([JSON.stringify(out,null,2)],{type:"application/json"});
+    var url=URL.createObjectURL(blob),a=document.createElement("a");
+    a.href=url;a.download="backup-il-mio-bar-cloud-"+new Date().toISOString().slice(0,10)+".json";
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+    setTimeout(function(){URL.revokeObjectURL(url);},1000);
+    showMessage("Backup creato.","ok");
+  }catch(e){showMessage("Backup non riuscito: "+friendlyError(e));}
+  setCloudStatus("Sincronizzato",true);
+}
+async function clearCollection(name){
+  while(true){
+    var snap=await db.collection(name).limit(350).get();
+    if(snap.empty)break;
+    var batch=db.batch();snap.docs.forEach(function(d){batch.delete(d.ref);});await batch.commit();
+    if(snap.docs.length<350)break;
+  }
+}
+async function restoreCloudBackup(data){
+  stopRealtime();setCloudStatus("Ripristino…",false);
+  var names=["openItems","openPayments","movements","tables","clients","meta"];
+  for(var i=0;i<names.length;i++)await clearCollection(names[i]);
+  var ops=[];
+  Object.keys(data.collections||{}).forEach(function(name){
+    (data.collections[name]||[]).forEach(function(x){ops.push({col:name,id:x.id,data:x.data});});
+  });
+  await commitOps(ops);startRealtime();
+}
+function restoreData(input){
+  var file=input.files&&input.files[0];if(!file)return;
+  var reader=new FileReader();
+  reader.onload=async function(){
+    try{
+      var x=JSON.parse(reader.result);
+      if(!confirm("Il ripristino sostituirà i dati cloud attuali. Continuare?")){input.value="";return;}
+      if(x&&x.format===BACKUP_FORMAT&&x.collections){
+        await restoreCloudBackup(x);
+      }else if(x&&Array.isArray(x.tables)&&Array.isArray(x.clients)){
+        stopRealtime();
+        var names=["openItems","openPayments","movements","tables","clients","meta"];
+        for(var i=0;i<names.length;i++)await clearCollection(names[i]);
+        await migrateLegacy(x);startRealtime();
+      }else throw new Error("File non valido");
+      showMessage("Backup ripristinato.","ok");
+    }catch(e){showMessage("Ripristino non riuscito: "+friendlyError(e));}
+    input.value="";
+  };
+  reader.readAsText(file);
+}
+</script>
+</body>
+</html>
