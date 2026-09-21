@@ -267,3 +267,126 @@ renderHistory=function(){
  _renderHistory2();
  setTimeout(addHistoryFilters,0);
 };
+
+
+// FIX DEFINITIVO RIPETI GIRO
+var lastRepeatedRound={};
+
+function getFixedLastRound(cid){
+ var t=getTable(currentTableId);
+ if(!t)return [];
+
+ var key=String(t.id)+"_"+String(cid);
+
+ // Se abbiamo già ripetuto un giro, usa sempre quello originale
+ if(lastRepeatedRound[key]&&lastRepeatedRound[key].length){
+  return lastRepeatedRound[key].slice();
+ }
+
+ var all=tableItems(t.id).slice().sort(function(a,b){
+  return String(a.date||"").localeCompare(String(b.date||""));
+ });
+
+ var pos=-1;
+ for(var i=all.length-1;i>=0;i--){
+  if(same(all[i].clientId,cid)){
+   pos=i;
+   break;
+  }
+ }
+
+ if(pos<0)return [];
+
+ var giro=[];
+ for(var j=pos;j>=0;j--){
+  if(!same(all[j].clientId,cid))break;
+  giro.unshift(Number(all[j].amount||0));
+ }
+
+ lastRepeatedRound[key]=giro.slice();
+ return giro;
+}
+
+repeatLastRound=async function(cid){
+ var t=getTable(currentTableId),c=getClient(cid);
+ if(!t||!c)return;
+
+ var giro=getFixedLastRound(cid);
+
+ if(!giro.length){
+  showMessage("Nessun giro da ripetere.");
+  return;
+ }
+
+ var batch=db.batch(),tot=0,base=Date.now();
+
+ giro.forEach(function(v,n){
+  v=Number(v);
+  if(!isFinite(v)||v<=0)return;
+
+  var ref=db.collection("openItems").doc();
+  var id=ref.id;
+  var date=new Date(base+n).toISOString();
+
+  tot+=v;
+
+  batch.set(ref,{
+   id:id,
+   tableId:Number(t.id),
+   clientId:String(c.id),
+   amount:v,
+   date:date,
+   movementId:id
+  });
+
+  batch.set(db.collection("movements").doc(id),{
+   id:id,
+   clientId:String(c.id),
+   type:"consumo",
+   amount:v,
+   label:"Consumo - "+t.name,
+   date:date,
+   sourceItemId:id,
+   tableId:Number(t.id)
+  });
+ });
+
+ batch.update(db.collection("clients").doc(String(c._id||c.id)),{
+  spentTotal:firebase.firestore.FieldValue.increment(tot),
+  balance:firebase.firestore.FieldValue.increment(tot)
+ });
+
+ try{
+  await batch.commit();
+  showMessage("Giro ripetuto: "+euro(tot),"ok");
+ }catch(e){
+  showMessage(friendlyError(e));
+ }
+};
+
+// Quando aggiungi manualmente un nuovo prezzo,
+// il prossimo Ripeti giro deve considerare il nuovo giro
+var _addPriceFix=addPrice;
+addPrice=async function(n){
+ var t=getTable(currentTableId);
+ if(t&&t.activeClientId){
+  delete lastRepeatedRound[String(t.id)+"_"+String(t.activeClientId)];
+ }
+ return _addPriceFix(n);
+};
+
+// Elimina eventuali pulsanti doppi e ne lascia uno solo
+var _renderTableFinal=renderTable;
+renderTable=function(){
+ _renderTableFinal();
+
+ document.querySelectorAll(".person").forEach(function(p){
+  var buttons=Array.from(p.querySelectorAll("button")).filter(function(b){
+   return b.textContent.indexOf("Ripeti giro")>=0;
+  });
+
+  if(buttons.length>1){
+   buttons.slice(1).forEach(function(b){b.remove();});
+  }
+ });
+};
