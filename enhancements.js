@@ -1,293 +1,106 @@
-var clientSearchText="",clientDebtFilter="all",tableClientSearchText="";
-var oldOpenTable=openTable;
-openTable=function(id){tableClientSearchText="";oldOpenTable(id)};
+/* IL MIO BAR - MIGLIORAMENTI UI */
 
-function srch(v){
- return String(v||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim()
+var tableSearchText="";
+var clientSearchText="";
+var clientDebtFilter="all";
+var lastRound={};
+
+function norm(v){
+ return String(v||"")
+  .toLowerCase()
+  .normalize("NFD")
+  .replace(/[\u0300-\u036f]/g,"")
+  .replace(/\s+/g," ")
+  .trim();
 }
 
-function filterTableClientSelect(){
- var i=document.getElementById("tableClientSearch"),
- s=document.getElementById("clientSelect"),t=getTable(currentTableId);
- if(!i||!s||!t)return;
- tableClientSearchText=i.value;
- var q=srch(i.value),active=t.activeClientId||"",v=s.value||active;
- var a=state.clients.filter(function(c){
-  return !q||srch(c.name).indexOf(q)>=0||same(c.id,active)
- });
- s.innerHTML='<option value="">Seleziona cliente…</option>'+
- a.map(function(c){return '<option value="'+esc(c.id)+'">'+esc(c.name)+'</option>'}).join("");
- if(v)s.value=v
-}
 
-var originalRenderTable=renderTable;
-renderTable=function(){
- originalRenderTable();
- var sel=document.getElementById("clientSelect");
- if(!sel)return;
+/* ---------- NAVIGAZIONE ---------- */
 
- var inp=document.createElement("input");
- inp.id="tableClientSearch";
- inp.placeholder="Cerca cliente…";
- inp.value=tableClientSearchText;
- inp.oninput=filterTableClientSelect;
- sel.parentNode.insertBefore(inp,sel);
-
- document.querySelectorAll(".person").forEach(function(p){
-  var h=p.querySelector("h3");
-  if(!h)return;
-  var name=h.textContent,cl=state.clients.find(function(c){return c.name===name});
-  if(!cl)return;
-
-  var b=document.createElement("button");
-  b.className="blue";
-  b.textContent="🔁 Ripeti giro";
-  b.onclick=function(){repeatLastRound(cl.id)};
-  p.appendChild(b)
- })
+var baseRenderCurrent=renderCurrent;
+renderCurrent=function(){
+ if(!initialized)return;
+ if(currentView==="tables")renderTables();
+ else if(currentView==="table")renderTable();
+ else if(currentView==="clients")renderClients();
+ else if(currentView==="client")renderClientShell();
+ else if(currentView==="history")renderHistory();
 };
 
-async function repeatLastRound(cid){
- var t=getTable(currentTableId),c=getClient(cid);
+var baseOpenTable=openTable;
+openTable=function(id){
+ tableSearchText="";
+ baseOpenTable(id);
+};
+
+
+/* ---------- RICERCA CLIENTE NEL TAVOLO ---------- */
+
+function tableClientResults(){
+ var box=document.getElementById("tableClientResults");
+ var inp=document.getElementById("tableClientSearch");
+ if(!box||!inp)return;
+
+ tableSearchText=inp.value;
+ var q=norm(tableSearchText);
+
+ if(!q){
+  box.innerHTML="";
+  return;
+ }
+
+ var found=state.clients.filter(function(c){
+  return norm(c.name).indexOf(q)>=0;
+ }).slice(0,20);
+
+ if(!found.length){
+  box.innerHTML='<div class="small">Nessun cliente trovato.</div>';
+  return;
+ }
+
+ box.innerHTML=found.map(function(c){
+  return '<button type="button" style="display:block;width:100%;margin:6px 0;text-align:left" '+
+   'onclick="chooseTableClient(\''+esc(c.id)+'\')">'+
+   esc(c.name)+'</button>';
+ }).join("");
+}
+
+async function chooseTableClient(cid){
+ var t=getTable(currentTableId);
+ var c=getClient(cid);
  if(!t||!c)return;
 
- var all=tableItems(t.id).slice().sort(function(a,b){
-  return String(a.date||"").localeCompare(String(b.date||""))
- });
-
- var k=-1;
- for(var i=all.length-1;i>=0;i--){
-  if(same(all[i].clientId,cid)){k=i;break}
- }
- if(k<0){showMessage("Nessun giro da ripetere.");return}
-
- var a=[];
- for(var j=k;j>=0;j--){
-  if(!same(all[j].clientId,cid))break;
-  a.unshift(all[j])
- }
-
- var batch=db.batch(),tot=0,base=Date.now();
-
- a.forEach(function(x,n){
-  var v=Number(x.amount||0);
-  if(v<=0)return;
-  var r=db.collection("openItems").doc(),id=r.id,
-  d=new Date(base+n).toISOString();
-  tot+=v;
-
-  batch.set(r,{
-   id:id,tableId:Number(t.id),clientId:String(c.id),
-   amount:v,date:d,movementId:id
-  });
-
-  batch.set(db.collection("movements").doc(id),{
-   id:id,clientId:String(c.id),type:"consumo",amount:v,
-   label:"Consumo - "+t.name,date:d,sourceItemId:id,
-   tableId:Number(t.id)
-  })
- });
-
- batch.update(db.collection("clients").doc(String(c._id||c.id)),{
-  spentTotal:firebase.firestore.FieldValue.increment(tot),
-  balance:firebase.firestore.FieldValue.increment(tot)
- });
-
  try{
-  await batch.commit();
-  showMessage("Giro ripetuto: "+euro(tot),"ok")
- }catch(e){showMessage(friendlyError(e))}
-}
+  await db.collection("tables")
+   .doc(String(t._id||t.id))
+   .update({activeClientId:String(c.id)});
 
-var originalShowClients=showClients;
-showClients=function(){
- clientSearchText="";clientDebtFilter="all";
- originalShowClients()
-};
-
-var originalRenderClients=renderClients;
-renderClients=function(){
- originalRenderClients();
- var app=document.getElementById("app"),
- first=app.querySelector(".card");
- if(!first)return;
-
- var i=document.createElement("input");
- i.placeholder="Cerca cliente…";
- i.style.marginTop="12px";
-
- var s=document.createElement("select");
- s.style.marginTop="8px";
- s.innerHTML='<option value="all">Tutti</option>'+
- '<option value="debt">Con debito</option>'+
- '<option value="nodebt">Senza debito</option>';
-
- first.appendChild(i);first.appendChild(s);
-
- function f(){
-  var q=srch(i.value);
-  Array.from(app.children).slice(1).forEach(function(x){
-   var h=x.querySelector("h3");
-   if(!h)return;
-   var c=state.clients.find(function(z){return z.name===h.textContent});
-   if(!c)return;
-   var d=clientBalance(c);
-   var ok=(!q||srch(c.name).indexOf(q)>=0)&&
-   (s.value==="all"||(s.value==="debt"?d>.001:d<=.001));
-   x.style.display=ok?"":"none"
-  })
+  tableSearchText="";
+ }catch(e){
+  showMessage(friendlyError(e));
  }
- i.oninput=f;s.onchange=f
-};
-
-var originalShowHistory=showHistory;
-showHistory=function(){
- originalShowHistory();
- setTimeout(addHistoryFilters,0)
-};
-
-function addHistoryFilters(){
- var app=document.getElementById("app"),card=app.querySelector(".card");
- if(!card||document.getElementById("histSearch"))return;
-
- var box=document.createElement("div");
- box.className="section";
- box.innerHTML=
- '<input id="histSearch" placeholder="Cerca cliente…">'+
- '<div class="row section">'+
- '<select id="histType">'+
- '<option value="all">Tutti</option>'+
- '<option value="consumo">Consumazioni</option>'+
- '<option value="pagamento">Pagamenti</option>'+
- '</select>'+
- '<input id="histDate" type="date">'+
- '</div>';
-
- card.insertBefore(box,document.getElementById("historyRows"));
-
- function f(){
-  var q=srch(document.getElementById("histSearch").value),
-  typ=document.getElementById("histType").value,
-  dt=document.getElementById("histDate").value;
-
-  document.querySelectorAll("#historyRows .item").forEach(function(el,n){
-   var x=historyDocs[n];
-   if(!x)return;
-   var h=x.data,c=getClient(h.clientId),
-   day=(h.date||"").slice(0,10);
-
-   el.style.display=
-   (!q||srch(c?c.name:"").indexOf(q)>=0)&&
-   (typ==="all"||h.type===typ)&&
-   (!dt||day===dt)?"":"none"
-  })
- }
-
- document.getElementById("histSearch").oninput=f;
- document.getElementById("histType").onchange=f;
- document.getElementById("histDate").onchange=f
 }
 
 
-// CORREZIONE CLIENTI + RIPETI GIRO + STORICO
-var _renderClients2=renderClients;
-renderClients=function(){
- _renderClients2();
+/* ---------- RIPETI GIRO ---------- */
 
- var app=document.getElementById("app");
- var first=app.querySelector(".card");
- if(!first)return;
+function roundKey(tid,cid){
+ return String(tid)+"_"+String(cid);
+}
 
- if(!document.getElementById("clientSearchFix")){
-  var box=document.createElement("div");
-  box.className="section";
-  box.innerHTML=
-   '<input id="clientSearchFix" placeholder="Cerca cliente per nome o cognome">'+
-   '<select id="clientDebtFix" style="margin-top:8px">'+
-   '<option value="all">Tutti</option>'+
-   '<option value="debt">Con debito</option>'+
-   '<option value="nodebt">Senza debito</option>'+
-   '</select>';
-  first.appendChild(box);
+function findLastRound(tid,cid){
+ var key=roundKey(tid,cid);
 
-  function filtraClienti(){
-   var q=srch(document.getElementById("clientSearchFix").value);
-   var tipo=document.getElementById("clientDebtFix").value;
-
-   Array.from(app.children).slice(1).forEach(function(card){
-    var h=card.querySelector("h3");
-    if(!h)return;
-    var c=state.clients.find(function(x){
-     return x.name===h.textContent;
-    });
-    if(!c)return;
-
-    var debito=clientBalance(c);
-    var okNome=!q||srch(c.name).indexOf(q)>=0;
-    var okDebito=tipo==="all"||
-     (tipo==="debt"&&debito>0.001)||
-     (tipo==="nodebt"&&debito<=0.001);
-
-    card.style.display=okNome&&okDebito?"":"none";
-   });
-  }
-
-  document.getElementById("clientSearchFix").oninput=filtraClienti;
-  document.getElementById("clientDebtFix").onchange=filtraClienti;
- }
-};
-
-var _renderTable2=renderTable;
-renderTable=function(){
- _renderTable2();
-
- document.querySelectorAll(".person").forEach(function(p){
-  if(p.querySelector(".repeatRoundFix"))return;
-
-  var h=p.querySelector("h3");
-  if(!h)return;
-
-  var nome=h.textContent.trim();
-  var c=state.clients.find(function(x){
-   return x.name===nome;
-  });
-  if(!c)return;
-
-  var b=document.createElement("button");
-  b.className="blue repeatRoundFix";
-  b.style.marginTop="10px";
-  b.textContent="🔁 Ripeti giro";
-  b.onclick=function(){repeatLastRound(c.id);};
-  p.appendChild(b);
- });
-};
-
-var _renderHistory2=renderHistory;
-renderHistory=function(){
- _renderHistory2();
- setTimeout(addHistoryFilters,0);
-};
-
-
-// FIX DEFINITIVO RIPETI GIRO
-var lastRepeatedRound={};
-
-function getFixedLastRound(cid){
- var t=getTable(currentTableId);
- if(!t)return [];
-
- var key=String(t.id)+"_"+String(cid);
-
- // Se abbiamo già ripetuto un giro, usa sempre quello originale
- if(lastRepeatedRound[key]&&lastRepeatedRound[key].length){
-  return lastRepeatedRound[key].slice();
+ if(lastRound[key]&&lastRound[key].length){
+  return lastRound[key].slice();
  }
 
- var all=tableItems(t.id).slice().sort(function(a,b){
+ var all=tableItems(tid).slice().sort(function(a,b){
   return String(a.date||"").localeCompare(String(b.date||""));
  });
 
  var pos=-1;
+
  for(var i=all.length-1;i>=0;i--){
   if(same(all[i].clientId,cid)){
    pos=i;
@@ -297,44 +110,51 @@ function getFixedLastRound(cid){
 
  if(pos<0)return [];
 
- var giro=[];
+ var values=[];
+
  for(var j=pos;j>=0;j--){
   if(!same(all[j].clientId,cid))break;
-  giro.unshift(Number(all[j].amount||0));
+
+  var n=Number(all[j].amount||0);
+  if(n>0)values.unshift(n);
  }
 
- lastRepeatedRound[key]=giro.slice();
- return giro;
+ lastRound[key]=values.slice();
+ return values;
 }
 
-repeatLastRound=async function(cid){
- var t=getTable(currentTableId),c=getClient(cid);
+async function repeatRound(cid){
+ var t=getTable(currentTableId);
+ var c=getClient(cid);
+
  if(!t||!c)return;
 
- var giro=getFixedLastRound(cid);
+ var values=findLastRound(t.id,c.id);
 
- if(!giro.length){
+ if(!values.length){
   showMessage("Nessun giro da ripetere.");
   return;
  }
 
- var batch=db.batch(),tot=0,base=Date.now();
+ var batch=db.batch();
+ var total=0;
+ var base=Date.now();
 
- giro.forEach(function(v,n){
-  v=Number(v);
-  if(!isFinite(v)||v<=0)return;
+ values.forEach(function(amount,n){
+  amount=Number(amount);
+  if(!isFinite(amount)||amount<=0)return;
 
   var ref=db.collection("openItems").doc();
   var id=ref.id;
   var date=new Date(base+n).toISOString();
 
-  tot+=v;
+  total+=amount;
 
   batch.set(ref,{
    id:id,
    tableId:Number(t.id),
    clientId:String(c.id),
-   amount:v,
+   amount:amount,
    date:date,
    movementId:id
   });
@@ -343,7 +163,7 @@ repeatLastRound=async function(cid){
    id:id,
    clientId:String(c.id),
    type:"consumo",
-   amount:v,
+   amount:amount,
    label:"Consumo - "+t.name,
    date:date,
    sourceItemId:id,
@@ -351,42 +171,400 @@ repeatLastRound=async function(cid){
   });
  });
 
- batch.update(db.collection("clients").doc(String(c._id||c.id)),{
-  spentTotal:firebase.firestore.FieldValue.increment(tot),
-  balance:firebase.firestore.FieldValue.increment(tot)
- });
+ batch.update(
+  db.collection("clients").doc(String(c._id||c.id)),
+  {
+   spentTotal:firebase.firestore.FieldValue.increment(total),
+   balance:firebase.firestore.FieldValue.increment(total)
+  }
+ );
 
  try{
   await batch.commit();
-  showMessage("Giro ripetuto: "+euro(tot),"ok");
+  showMessage("Giro ripetuto: "+euro(total),"ok");
  }catch(e){
   showMessage(friendlyError(e));
  }
-};
+}
 
-// Quando aggiungi manualmente un nuovo prezzo,
-// il prossimo Ripeti giro deve considerare il nuovo giro
-var _addPriceFix=addPrice;
+
+/* Un nuovo prezzo crea un nuovo giro da ricordare */
+
+var baseAddPrice=addPrice;
+
 addPrice=async function(n){
  var t=getTable(currentTableId);
+
  if(t&&t.activeClientId){
-  delete lastRepeatedRound[String(t.id)+"_"+String(t.activeClientId)];
+  delete lastRound[roundKey(t.id,t.activeClientId)];
  }
- return _addPriceFix(n);
+
+ return baseAddPrice(n);
 };
 
-// Elimina eventuali pulsanti doppi e ne lascia uno solo
-var _renderTableFinal=renderTable;
-renderTable=function(){
- _renderTableFinal();
 
- document.querySelectorAll(".person").forEach(function(p){
-  var buttons=Array.from(p.querySelectorAll("button")).filter(function(b){
-   return b.textContent.indexOf("Ripeti giro")>=0;
+/* ---------- TAVOLO ---------- */
+
+var baseRenderTable=renderTable;
+
+renderTable=function(){
+ baseRenderTable();
+
+ var select=document.getElementById("clientSelect");
+ if(!select)return;
+
+ /* Nasconde completamente il menu iPhone/Android */
+ select.style.display="none";
+
+ var oldSearch=document.getElementById("tableClientSearch");
+ if(oldSearch)return;
+
+ var search=document.createElement("input");
+ search.id="tableClientSearch";
+ search.type="search";
+ search.autocomplete="off";
+ search.placeholder="Cerca cliente per nome o cognome…";
+ search.value=tableSearchText;
+ search.oninput=tableClientResults;
+
+ var results=document.createElement("div");
+ results.id="tableClientResults";
+
+ select.parentNode.insertBefore(search,select);
+ select.parentNode.insertBefore(results,select);
+
+ /* Un solo pulsante Ripeti giro per persona */
+ document.querySelectorAll(".person").forEach(function(person){
+  var title=person.querySelector("h3");
+  if(!title)return;
+
+  var name=title.textContent.trim();
+
+  var c=state.clients.find(function(x){
+   return x.name===name;
   });
 
-  if(buttons.length>1){
-   buttons.slice(1).forEach(function(b){b.remove();});
-  }
+  if(!c)return;
+
+  var button=document.createElement("button");
+  button.type="button";
+  button.className="blue";
+  button.style.marginTop="10px";
+  button.textContent="🔁 Ripeti giro";
+  button.onclick=function(){
+   repeatRound(c.id);
+  };
+
+  person.appendChild(button);
  });
+
+ if(tableSearchText){
+  tableClientResults();
+ }
+};
+
+
+/* ---------- CLIENTI DUPLICATI ---------- */
+
+function clientExists(name){
+ var n=norm(name);
+
+ return state.clients.some(function(c){
+  return norm(c.name)===n;
+ });
+}
+
+var baseSaveNewClient=saveNewClient;
+
+saveNewClient=async function(){
+ var el=document.getElementById("newName");
+ var name=el?(el.value||"").trim():"";
+
+ if(!name){
+  showMessage("Scrivi il nome del cliente.");
+  return;
+ }
+
+ if(clientExists(name)){
+  showMessage("Questo cliente esiste già.");
+  return;
+ }
+
+ return baseSaveNewClient();
+};
+
+var baseSaveNewClientForTable=saveNewClientForTable;
+
+saveNewClientForTable=async function(){
+ var el=document.getElementById("newName");
+ var name=el?(el.value||"").trim():"";
+
+ if(!name){
+  showMessage("Scrivi il nome del cliente.");
+  return;
+ }
+
+ if(clientExists(name)){
+  showMessage("Questo cliente esiste già.");
+  return;
+ }
+
+ return baseSaveNewClientForTable();
+};
+
+
+/* ---------- RICERCA E FILTRO CLIENTI ---------- */
+
+var baseShowClients=showClients;
+
+showClients=function(){
+ clientSearchText="";
+ clientDebtFilter="all";
+ baseShowClients();
+};
+
+var baseRenderClients=renderClients;
+
+renderClients=function(){
+ baseRenderClients();
+
+ var app=document.getElementById("app");
+ if(!app)return;
+
+ var first=app.querySelector(".card");
+ if(!first)return;
+
+ var box=document.createElement("div");
+ box.className="section";
+
+ box.innerHTML=
+  '<input id="clientSearch" type="search" autocomplete="off" '+
+  'placeholder="Cerca cliente per nome o cognome…" value="'+
+  esc(clientSearchText)+'">'+
+
+  '<select id="clientDebtFilter" style="margin-top:8px">'+
+  '<option value="all">Tutti</option>'+
+  '<option value="debt">Con debito</option>'+
+  '<option value="nodebt">Senza debito</option>'+
+  '</select>';
+
+ first.appendChild(box);
+
+ var search=document.getElementById("clientSearch");
+ var filter=document.getElementById("clientDebtFilter");
+
+ filter.value=clientDebtFilter;
+
+ function applyClientFilter(){
+  clientSearchText=search.value;
+  clientDebtFilter=filter.value;
+
+  var q=norm(clientSearchText);
+
+  Array.from(app.children).slice(1).forEach(function(card){
+   var h=card.querySelector("h3");
+   if(!h)return;
+
+   var c=state.clients.find(function(x){
+    return x.name===h.textContent.trim();
+   });
+
+   if(!c)return;
+
+   var debt=clientBalance(c);
+
+   var nameOK=!q||norm(c.name).indexOf(q)>=0;
+
+   var debtOK=
+    clientDebtFilter==="all" ||
+    (clientDebtFilter==="debt" && debt>0.001) ||
+    (clientDebtFilter==="nodebt" && debt<=0.001);
+
+   card.style.display=(nameOK&&debtOK)?"":"none";
+  });
+ }
+
+ search.oninput=applyClientFilter;
+ filter.onchange=applyClientFilter;
+
+ applyClientFilter();
+};
+
+
+/* ---------- ELIMINA CLIENTE ---------- */
+
+async function deleteClientSafe(cid){
+ var c=getClient(cid);
+ if(!c)return;
+
+ if(clientBalance(c)>0.001){
+  showMessage("Prima devi azzerare il debito del cliente.");
+  return;
+ }
+
+ if(clientOpenDue(c.id)>0.001){
+  showMessage("Il cliente ha ancora un conto aperto.");
+  return;
+ }
+
+ try{
+  var items=state.items.some(function(x){
+   return same(x.clientId,c.id);
+  });
+
+  if(items){
+   showMessage("Il cliente ha ancora consumazioni in un tavolo.");
+   return;
+  }
+
+  var history=await db.collection("movements")
+   .where("clientId","==",String(c.id))
+   .limit(1)
+   .get();
+
+  if(!history.empty){
+   showMessage("Il cliente ha uno storico e non può essere eliminato.");
+   return;
+  }
+
+  if(!confirm("Eliminare definitivamente "+c.name+"?")){
+   return;
+  }
+
+  await db.collection("clients")
+   .doc(String(c._id||c.id))
+   .delete();
+
+  currentClientId=null;
+  showClients();
+  showMessage("Cliente eliminato.","ok");
+
+ }catch(e){
+  showMessage(friendlyError(e));
+ }
+}
+
+var baseRenderClientShell=renderClientShell;
+
+renderClientShell=function(){
+ baseRenderClientShell();
+
+ var c=getClient(currentClientId);
+ if(!c)return;
+
+ var card=document.querySelector("#app .card");
+ if(!card)return;
+
+ var section=document.createElement("div");
+ section.className="section";
+
+ section.innerHTML=
+  '<button type="button" class="red" '+
+  'onclick="deleteClientSafe(\''+esc(c.id)+'\')">'+
+  'Elimina cliente</button>';
+
+ card.appendChild(section);
+};
+
+
+/* ---------- STORICO GENERALE ---------- */
+
+var historySearchText="";
+var historyTypeFilter="all";
+var historyDateFilter="";
+
+var baseShowHistory=showHistory;
+
+showHistory=function(){
+ historySearchText="";
+ historyTypeFilter="all";
+ historyDateFilter="";
+ baseShowHistory();
+};
+
+var baseRenderHistory=renderHistory;
+
+renderHistory=function(){
+ baseRenderHistory();
+
+ var rows=document.getElementById("historyRows");
+ if(!rows)return;
+
+ var card=rows.closest(".card");
+ if(!card)return;
+
+ var box=document.createElement("div");
+ box.className="section";
+ box.id="historyFilters";
+
+ box.innerHTML=
+  '<input id="historySearch" type="search" autocomplete="off" '+
+  'placeholder="Cerca cliente…" value="'+esc(historySearchText)+'">'+
+
+  '<select id="historyType" style="margin-top:8px">'+
+  '<option value="all">Tutti i movimenti</option>'+
+  '<option value="consumo">Consumazioni</option>'+
+  '<option value="pagamento">Pagamenti</option>'+
+  '</select>'+
+
+  '<input id="historyDate" type="date" style="margin-top:8px" value="'+
+  esc(historyDateFilter)+'">';
+
+ card.insertBefore(box,rows);
+
+ var search=document.getElementById("historySearch");
+ var type=document.getElementById("historyType");
+ var date=document.getElementById("historyDate");
+
+ type.value=historyTypeFilter;
+
+ function applyHistoryFilter(){
+  historySearchText=search.value;
+  historyTypeFilter=type.value;
+  historyDateFilter=date.value;
+
+  var q=norm(historySearchText);
+
+  var elements=rows.querySelectorAll(".item");
+
+  elements.forEach(function(el,index){
+   var entry=historyDocs[index];
+   if(!entry)return;
+
+   var h=entry.data;
+   var c=getClient(h.clientId);
+
+   var nameOK=
+    !q ||
+    norm(c?c.name:"").indexOf(q)>=0;
+
+   var typeOK=
+    historyTypeFilter==="all" ||
+    h.type===historyTypeFilter;
+
+   var dateOK=true;
+
+   if(historyDateFilter){
+    var d=new Date(h.date);
+
+    if(!isNaN(d.getTime())){
+     var yyyy=d.getFullYear();
+     var mm=String(d.getMonth()+1).padStart(2,"0");
+     var dd=String(d.getDate()).padStart(2,"0");
+
+     dateOK=(yyyy+"-"+mm+"-"+dd)===historyDateFilter;
+    }else{
+     dateOK=false;
+    }
+   }
+
+   el.style.display=(nameOK&&typeOK&&dateOK)?"":"none";
+  });
+ }
+
+ search.oninput=applyHistoryFilter;
+ type.onchange=applyHistoryFilter;
+ date.onchange=applyHistoryFilter;
+
+ applyHistoryFilter();
 };
