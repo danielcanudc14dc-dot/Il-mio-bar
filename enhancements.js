@@ -187,3 +187,83 @@ function addHistoryFilters(){
  document.getElementById("histType").onchange=f;
  document.getElementById("histDate").onchange=f
 }
+
+
+// CORREZIONE CLIENTI + RIPETI GIRO + STORICO
+var _renderClients2=renderClients;
+renderClients=function(){
+ _renderClients2();
+
+ var app=document.getElementById("app");
+ var first=app.querySelector(".card");
+ if(!first)return;
+
+ if(!document.getElementById("clientSearchFix")){
+  var box=document.createElement("div");
+  box.className="section";
+  box.innerHTML=
+   '<input id="clientSearchFix" placeholder="Cerca cliente per nome o cognome">'+
+   '<select id="clientDebtFix" style="margin-top:8px">'+
+   '<option value="all">Tutti</option>'+
+   '<option value="debt">Con debito</option>'+
+   '<option value="nodebt">Senza debito</option>'+
+   '</select>';
+  first.appendChild(box);
+
+  function filtraClienti(){
+   var q=srch(document.getElementById("clientSearchFix").value);
+   var tipo=document.getElementById("clientDebtFix").value;
+
+   Array.from(app.children).slice(1).forEach(function(card){
+    var h=card.querySelector("h3");
+    if(!h)return;
+    var c=state.clients.find(function(x){
+     return x.name===h.textContent;
+    });
+    if(!c)return;
+
+    var debito=clientBalance(c);
+    var okNome=!q||srch(c.name).indexOf(q)>=0;
+    var okDebito=tipo==="all"||
+     (tipo==="debt"&&debito>0.001)||
+     (tipo==="nodebt"&&debito<=0.001);
+
+    card.style.display=okNome&&okDebito?"":"none";
+   });
+  }
+
+  document.getElementById("clientSearchFix").oninput=filtraClienti;
+  document.getElementById("clientDebtFix").onchange=filtraClienti;
+ }
+};
+
+var _renderTable2=renderTable;
+renderTable=function(){
+ _renderTable2();
+
+ document.querySelectorAll(".person").forEach(function(p){
+  if(p.querySelector(".repeatRoundFix"))return;
+
+  var h=p.querySelector("h3");
+  if(!h)return;
+
+  var nome=h.textContent.trim();
+  var c=state.clients.find(function(x){
+   return x.name===nome;
+  });
+  if(!c)return;
+
+  var b=document.createElement("button");
+  b.className="blue repeatRoundFix";
+  b.style.marginTop="10px";
+  b.textContent="🔁 Ripeti giro";
+  b.onclick=function(){repeatLastRound(c.id);};
+  p.appendChild(b);
+ });
+};
+
+var _renderHistory2=renderHistory;
+renderHistory=function(){
+ _renderHistory2();
+ setTimeout(addHistoryFilters,0);
+};
